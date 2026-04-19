@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:18.3
+    environment:
+      POSTGRES_DB: voice_stream
+      POSTGRES_USER: voice_stream
+      POSTGRES_PASSWORD: voice_stream
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice_stream -d voice_stream"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - voice_stream_e2e_postgres_data:/var/lib/postgresql
+
+  backend:
+    image: eclipse-temurin:21-jdk
+    working_dir: /workspace
+    command: ["sh", "-lc", "sh ./gradlew --no-daemon quarkusDev -Dquarkus.http.host=0.0.0.0"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_JDBC_URL: jdbc:postgresql://postgres:5432/voice_stream
+      DB_USERNAME: voice_stream
+      DB_PASSWORD: voice_stream
+      MEDIA_SIGNALING_URL: ws://backend:8080/ws/signaling
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/workspace
+
+  media-e2e:
+    image: mcr.microsoft.com/playwright:v1.57.0-noble
+    working_dir: /workspace/e2e/media
+    command: ["sh", "-lc", "npm install --no-audit --no-fund && npm test"]
+    environment:
+      BACKEND_BASE_URL: http://backend:8080
+      CI: "true"
+    volumes:
+      - .:/workspace
+
+volumes:
+  voice_stream_e2e_postgres_data:

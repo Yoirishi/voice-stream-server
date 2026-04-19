@@ -41,3 +41,6 @@ nb-configuration.xml
 /.quarkus/cli/plugins/
 # TLS Certificates
 .certs/
+
+e2e/media/node_modules
+e2e/media/test-results

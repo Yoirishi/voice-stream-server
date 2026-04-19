@@ -29,6 +29,7 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.rest-assured:rest-assured")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:6.3.0")
 }
 
 group = "ru.voicestream"

@@ -68,6 +68,20 @@ POST /api/auth/login
 
 Auth can be configured with `AUTH_TOKEN_SECRET`, `AUTH_ACCESS_TOKEN_TTL_SECONDS`, `AUTH_REFRESH_TOKEN_TTL_SECONDS`, and `AUTH_PASSWORD_HASH_ITERATIONS`.
 
+## Tests
+
+Run JVM tests:
+
+```shell
+./gradlew test
+```
+
+Run the browser fake-media harness:
+
+```shell
+docker compose -f compose.e2e.yaml up --abort-on-container-exit --exit-code-from media-e2e media-e2e
+```
+
 Current GraphQL entry points:
 
 - `channels`

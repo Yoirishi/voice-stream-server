@@ -12,6 +12,8 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Hibernate ORM is present and entities mirror `V1__initial_schema.sql`, but do not use `import.sql` or Hibernate schema generation for core schema work.
 - REST auth endpoints live under `POST /api/auth/register` and `POST /api/auth/login`.
 - Media is not handled by Quarkus directly. Quarkus issues media join tickets and relays app-level signaling; an external WebRTC SFU should move audio/video/screen packets.
+- Unit tests use JUnit 5 and Mockito-Kotlin. Integration tests can use QuarkusTest, RestAssured, and JDK WebSocket clients.
+- Browser media e2e scaffolding lives in `e2e/media` and runs through `compose.e2e.yaml`; it currently validates fake camera/mic WebRTC flow before an SFU is selected.
 
 ## Domain Decisions
 

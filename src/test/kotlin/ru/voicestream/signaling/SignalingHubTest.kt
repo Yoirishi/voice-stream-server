@@ -6,21 +6,22 @@ import jakarta.websocket.RemoteEndpoint
 import jakarta.websocket.Session
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
 import java.io.StringReader
-import java.lang.reflect.InvocationHandler
-import java.lang.reflect.Method
-import java.lang.reflect.Proxy
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Future
 
 class SignalingHubTest {
     @Test
     fun `join notifies existing peers in the same media session`() {
         val hub = SignalingHub()
         val mediaSessionId = UUID.randomUUID()
-        val first = FakeSession("first")
-        val second = FakeSession("second")
+        val first = mockPeer("first")
+        val second = mockPeer("second")
 
         hub.join(mediaSessionId, first.session)
         hub.join(mediaSessionId, second.session)
@@ -39,9 +40,9 @@ class SignalingHubTest {
         val hub = SignalingHub()
         val mediaSessionId = UUID.randomUUID()
         val otherMediaSessionId = UUID.randomUUID()
-        val sender = FakeSession("sender")
-        val receiver = FakeSession("receiver")
-        val outsider = FakeSession("outsider")
+        val sender = mockPeer("sender")
+        val receiver = mockPeer("receiver")
+        val outsider = mockPeer("outsider")
 
         hub.join(mediaSessionId, sender.session)
         hub.join(mediaSessionId, receiver.session)
@@ -68,8 +69,8 @@ class SignalingHubTest {
     fun `relay wraps non-json payload as a string`() {
         val hub = SignalingHub()
         val mediaSessionId = UUID.randomUUID()
-        val sender = FakeSession("sender")
-        val receiver = FakeSession("receiver")
+        val sender = mockPeer("sender")
+        val receiver = mockPeer("receiver")
 
         hub.join(mediaSessionId, sender.session)
         hub.join(mediaSessionId, receiver.session)
@@ -87,8 +88,8 @@ class SignalingHubTest {
     fun `leave removes peer and notifies remaining peers`() {
         val hub = SignalingHub()
         val mediaSessionId = UUID.randomUUID()
-        val remaining = FakeSession("remaining")
-        val leaving = FakeSession("leaving")
+        val remaining = mockPeer("remaining")
+        val leaving = mockPeer("leaving")
 
         hub.join(mediaSessionId, remaining.session)
         hub.join(mediaSessionId, leaving.session)
@@ -110,91 +111,41 @@ class SignalingHubTest {
     @Test
     fun `close sends cannot accept close reason`() {
         val hub = SignalingHub()
-        val session = FakeSession("connection")
+        val session = mock<Session>()
+        val reasonCaptor = argumentCaptor<CloseReason>()
 
-        hub.close(session.session, "Invalid token.")
+        hub.close(session, "Invalid token.")
 
-        assertEquals(false, session.isOpen)
-        assertEquals(CloseReason.CloseCodes.CANNOT_ACCEPT, session.closeReason?.closeCode)
-        assertEquals("Invalid token.", session.closeReason?.reasonPhrase)
+        verify(session).close(reasonCaptor.capture())
+        assertEquals(CloseReason.CloseCodes.CANNOT_ACCEPT, reasonCaptor.firstValue.closeCode)
+        assertEquals("Invalid token.", reasonCaptor.firstValue.reasonPhrase)
+    }
+
+    private fun mockPeer(connectionId: String, isOpen: Boolean = true): MockPeer {
+        val sentTexts = mutableListOf<String>()
+        val asyncRemote = mock<RemoteEndpoint.Async>()
+        whenever(asyncRemote.sendText(any<String>())).thenAnswer { invocation ->
+            sentTexts += invocation.getArgument<String>(0)
+            CompletableFuture.completedFuture<Void?>(null)
+        }
+
+        val session = mock<Session>()
+        whenever(session.id).thenReturn(connectionId)
+        whenever(session.isOpen).thenReturn(isOpen)
+        whenever(session.asyncRemote).thenReturn(asyncRemote)
+
+        return MockPeer(session, sentTexts)
     }
 
     private fun parse(message: String) =
         Json.createReader(StringReader(message)).readObject()
 
-    private class FakeSession(private val connectionId: String) {
-        val sentTexts = mutableListOf<String>()
-        var closeReason: CloseReason? = null
-            private set
-        var isOpen: Boolean = true
-            private set
-
-        val session: Session = Proxy.newProxyInstance(
-            Session::class.java.classLoader,
-            arrayOf(Session::class.java),
-            SessionHandler(),
-        ) as Session
-
+    private data class MockPeer(
+        val session: Session,
+        val sentTexts: MutableList<String>,
+    ) {
         fun clear() {
             sentTexts.clear()
         }
-
-        private val asyncRemote: RemoteEndpoint.Async = Proxy.newProxyInstance(
-            RemoteEndpoint.Async::class.java.classLoader,
-            arrayOf(RemoteEndpoint.Async::class.java),
-            AsyncRemoteHandler(),
-        ) as RemoteEndpoint.Async
-
-        private inner class SessionHandler : InvocationHandler {
-            override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? =
-                when (method.name) {
-                    "getId" -> connectionId
-                    "isOpen" -> isOpen
-                    "getAsyncRemote" -> asyncRemote
-                    "close" -> {
-                        isOpen = false
-                        closeReason = args?.firstOrNull() as? CloseReason
-                        null
-                    }
-                    "toString" -> "FakeSession($connectionId)"
-                    "hashCode" -> System.identityHashCode(proxy)
-                    "equals" -> proxy === args?.firstOrNull()
-                    else -> defaultValue(method.returnType)
-                }
-        }
-
-        private inner class AsyncRemoteHandler : InvocationHandler {
-            override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? {
-                if (method.name == "sendText") {
-                    sentTexts += args?.firstOrNull() as String
-                    return if (Future::class.java.isAssignableFrom(method.returnType)) {
-                        CompletableFuture.completedFuture<Void?>(null)
-                    } else {
-                        null
-                    }
-                }
-
-                return when (method.name) {
-                    "toString" -> "FakeAsyncRemote($connectionId)"
-                    "hashCode" -> System.identityHashCode(proxy)
-                    "equals" -> proxy === args?.firstOrNull()
-                    else -> defaultValue(method.returnType)
-                }
-            }
-        }
-
-        private fun defaultValue(type: Class<*>): Any? =
-            when (type) {
-                java.lang.Boolean.TYPE -> false
-                java.lang.Byte.TYPE -> 0.toByte()
-                java.lang.Short.TYPE -> 0.toShort()
-                java.lang.Integer.TYPE -> 0
-                java.lang.Long.TYPE -> 0L
-                java.lang.Float.TYPE -> 0f
-                java.lang.Double.TYPE -> 0.0
-                java.lang.Character.TYPE -> 0.toChar()
-                java.lang.Void.TYPE -> null
-                else -> null
-            }
     }
 }
