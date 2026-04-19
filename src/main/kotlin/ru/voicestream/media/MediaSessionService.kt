@@ -1,0 +1,251 @@
+package ru.voicestream.media
+
+import jakarta.enterprise.context.ApplicationScoped
+import jakarta.persistence.EntityManager
+import jakarta.transaction.Transactional
+import org.eclipse.microprofile.config.inject.ConfigProperty
+import ru.voicestream.domain.ChannelType
+import ru.voicestream.domain.MediaSessionStatus
+import ru.voicestream.domain.MediaSessionType
+import ru.voicestream.persistence.entity.ChannelEntity
+import ru.voicestream.persistence.entity.MediaSessionEntity
+import ru.voicestream.persistence.entity.MediaSessionParticipantEntity
+import ru.voicestream.persistence.entity.UserEntity
+import java.time.OffsetDateTime
+import java.util.UUID
+
+@ApplicationScoped
+class MediaSessionService(
+    private val entityManager: EntityManager,
+    private val mediaTokenService: MediaTokenService,
+) {
+    @ConfigProperty(name = "voice-stream.media.sfu-provider")
+    lateinit var sfuProvider: String
+
+    @ConfigProperty(name = "voice-stream.media.sfu-url")
+    lateinit var sfuUrl: String
+
+    @ConfigProperty(name = "voice-stream.media.signaling-url")
+    lateinit var signalingUrl: String
+
+    @Transactional
+    fun startSession(input: StartMediaSessionRequest): MediaJoinTicket {
+        val channel = requireVoiceChannel(input.channelId)
+        require(entityManager.find(UserEntity::class.java, input.userId) != null) {
+            "User ${input.userId} was not found."
+        }
+
+        val session = activeSession(channel, input.type) ?: createSession(channel, input)
+        joinParticipant(
+            mediaSessionId = requireNotNull(session.id),
+            userId = input.userId,
+            canPublishAudio = input.canPublishAudio,
+            canPublishScreen = input.canPublishScreen,
+            canSubscribe = true,
+        )
+
+        return issueTicket(session, input.userId, input.canPublishAudio, input.canPublishScreen, canSubscribe = true)
+    }
+
+    @Transactional
+    fun joinSession(input: JoinMediaSessionRequest): MediaJoinTicket {
+        val session = requireNotNull(entityManager.find(MediaSessionEntity::class.java, input.mediaSessionId)) {
+            "Media session ${input.mediaSessionId} was not found."
+        }
+        require(session.status == MediaSessionStatus.ACTIVE) { "Media session ${input.mediaSessionId} is not active." }
+        require(entityManager.find(UserEntity::class.java, input.userId) != null) {
+            "User ${input.userId} was not found."
+        }
+
+        joinParticipant(
+            mediaSessionId = requireNotNull(session.id),
+            userId = input.userId,
+            canPublishAudio = input.canPublishAudio,
+            canPublishScreen = input.canPublishScreen,
+            canSubscribe = input.canSubscribe,
+        )
+
+        return issueTicket(session, input.userId, input.canPublishAudio, input.canPublishScreen, input.canSubscribe)
+    }
+
+    fun activeSessions(channelId: UUID): List<MediaSessionView> =
+        entityManager
+            .createQuery(
+                """
+                select s from MediaSessionEntity s
+                where s.channelId = :channelId and s.status = :status
+                order by s.startedAt asc
+                """.trimIndent(),
+                MediaSessionEntity::class.java,
+            )
+            .setParameter("channelId", channelId)
+            .setParameter("status", MediaSessionStatus.ACTIVE)
+            .resultList
+            .map { it.toView() }
+
+    private fun requireVoiceChannel(channelId: UUID): ChannelEntity {
+        val channel = requireNotNull(entityManager.find(ChannelEntity::class.java, channelId)) {
+            "Channel $channelId was not found."
+        }
+        require(channel.type == ChannelType.VOICE) { "Media sessions can only be started in VOICE channels." }
+        return channel
+    }
+
+    private fun activeSession(channel: ChannelEntity, type: MediaSessionType): MediaSessionEntity? =
+        entityManager
+            .createQuery(
+                """
+                select s from MediaSessionEntity s
+                where s.channelId = :channelId and s.type = :type and s.status = :status
+                order by s.startedAt desc
+                """.trimIndent(),
+                MediaSessionEntity::class.java,
+            )
+            .setParameter("channelId", channel.id)
+            .setParameter("type", type)
+            .setParameter("status", MediaSessionStatus.ACTIVE)
+            .setMaxResults(1)
+            .resultList
+            .firstOrNull()
+
+    private fun createSession(channel: ChannelEntity, input: StartMediaSessionRequest): MediaSessionEntity {
+        val now = OffsetDateTime.now()
+        val sessionId = UUID.randomUUID()
+        val session = MediaSessionEntity().apply {
+            id = sessionId
+            channelId = requireNotNull(channel.id)
+            createdByUserId = input.userId
+            type = input.type
+            this.sfuProvider = this@MediaSessionService.sfuProvider
+            sfuRoomName = "channel-${channel.id}-${input.type.name.lowercase()}-$sessionId"
+            status = MediaSessionStatus.ACTIVE
+            startedAt = now
+            createdAt = now
+            updatedAt = now
+        }
+        entityManager.persist(session)
+        return session
+    }
+
+    private fun joinParticipant(
+        mediaSessionId: UUID,
+        userId: UUID,
+        canPublishAudio: Boolean,
+        canPublishScreen: Boolean,
+        canSubscribe: Boolean,
+    ) {
+        val existing = entityManager
+            .createQuery(
+                """
+                select p from MediaSessionParticipantEntity p
+                where p.mediaSessionId = :mediaSessionId and p.userId = :userId
+                """.trimIndent(),
+                MediaSessionParticipantEntity::class.java,
+            )
+            .setParameter("mediaSessionId", mediaSessionId)
+            .setParameter("userId", userId)
+            .resultList
+            .firstOrNull()
+
+        val participant = existing ?: MediaSessionParticipantEntity().apply {
+            id = UUID.randomUUID()
+            this.mediaSessionId = mediaSessionId
+            this.userId = userId
+            joinedAt = OffsetDateTime.now()
+            entityManager.persist(this)
+        }
+
+        participant.canPublishAudio = canPublishAudio
+        participant.canPublishScreen = canPublishScreen
+        participant.canSubscribe = canSubscribe
+        participant.leftAt = null
+    }
+
+    private fun issueTicket(
+        session: MediaSessionEntity,
+        userId: UUID,
+        canPublishAudio: Boolean,
+        canPublishScreen: Boolean,
+        canSubscribe: Boolean,
+    ): MediaJoinTicket {
+        val mediaSessionId = requireNotNull(session.id)
+        val channelId = requireNotNull(session.channelId)
+        val issuedToken = mediaTokenService.issue(
+            MediaTokenInput(
+                mediaSessionId = mediaSessionId,
+                channelId = channelId,
+                userId = userId,
+                canPublishAudio = canPublishAudio,
+                canPublishScreen = canPublishScreen,
+                canSubscribe = canSubscribe,
+            ),
+        )
+
+        return MediaJoinTicket(
+            mediaSessionId = mediaSessionId,
+            channelId = channelId,
+            userId = userId,
+            sfuProvider = session.sfuProvider,
+            sfuUrl = sfuUrl,
+            signalingUrl = "$signalingUrl/$mediaSessionId?token=${issuedToken.token}",
+            roomName = session.sfuRoomName,
+            token = issuedToken.token,
+            expiresAt = issuedToken.expiresAt,
+            canPublishAudio = canPublishAudio,
+            canPublishScreen = canPublishScreen,
+            canSubscribe = canSubscribe,
+        )
+    }
+
+    private fun MediaSessionEntity.toView(): MediaSessionView =
+        MediaSessionView(
+            id = requireNotNull(id),
+            channelId = requireNotNull(channelId),
+            type = type,
+            sfuProvider = sfuProvider,
+            roomName = sfuRoomName,
+            status = status,
+            startedAt = startedAt,
+        )
+}
+
+data class StartMediaSessionRequest(
+    val channelId: UUID,
+    val userId: UUID,
+    val type: MediaSessionType,
+    val canPublishAudio: Boolean,
+    val canPublishScreen: Boolean,
+)
+
+data class JoinMediaSessionRequest(
+    val mediaSessionId: UUID,
+    val userId: UUID,
+    val canPublishAudio: Boolean,
+    val canPublishScreen: Boolean,
+    val canSubscribe: Boolean,
+)
+
+data class MediaJoinTicket(
+    val mediaSessionId: UUID,
+    val channelId: UUID,
+    val userId: UUID,
+    val sfuProvider: String,
+    val sfuUrl: String,
+    val signalingUrl: String,
+    val roomName: String,
+    val token: String,
+    val expiresAt: OffsetDateTime,
+    val canPublishAudio: Boolean,
+    val canPublishScreen: Boolean,
+    val canSubscribe: Boolean,
+)
+
+data class MediaSessionView(
+    val id: UUID,
+    val channelId: UUID,
+    val type: MediaSessionType,
+    val sfuProvider: String,
+    val roomName: String,
+    val status: MediaSessionStatus,
+    val startedAt: OffsetDateTime,
+)

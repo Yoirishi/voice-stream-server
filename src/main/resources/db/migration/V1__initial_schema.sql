@@ -72,6 +72,21 @@ CREATE INDEX channels_owner_user_id_idx ON channels(owner_user_id);
 CREATE INDEX channels_group_position_idx ON channels(group_id, position);
 CREATE INDEX channels_type_position_idx ON channels(channel_type, position);
 
+CREATE TABLE channel_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    author_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    edited_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    CONSTRAINT channel_messages_body_not_blank CHECK (length(btrim(body)) > 0)
+);
+
+CREATE INDEX channel_messages_channel_created_idx ON channel_messages(channel_id, created_at);
+CREATE INDEX channel_messages_author_user_id_idx ON channel_messages(author_user_id);
+
 CREATE TABLE channel_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -150,6 +165,39 @@ CREATE TABLE role_permissions (
     CONSTRAINT role_permissions_effect_check CHECK (effect IN ('ALLOW', 'DENY'))
 );
 
+CREATE TABLE media_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    created_by_user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    session_type VARCHAR(16) NOT NULL,
+    sfu_provider VARCHAR(64) NOT NULL,
+    sfu_room_name VARCHAR(160) NOT NULL UNIQUE,
+    status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT media_sessions_type_check CHECK (session_type IN ('VOICE', 'SCREEN_SHARE')),
+    CONSTRAINT media_sessions_status_check CHECK (status IN ('ACTIVE', 'ENDED'))
+);
+
+CREATE INDEX media_sessions_channel_status_idx ON media_sessions(channel_id, status);
+CREATE INDEX media_sessions_started_at_idx ON media_sessions(started_at);
+
+CREATE TABLE media_session_participants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    media_session_id UUID NOT NULL REFERENCES media_sessions(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    can_publish_audio BOOLEAN NOT NULL DEFAULT false,
+    can_publish_screen BOOLEAN NOT NULL DEFAULT false,
+    can_subscribe BOOLEAN NOT NULL DEFAULT true,
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    left_at TIMESTAMPTZ,
+    UNIQUE (media_session_id, user_id)
+);
+
+CREATE INDEX media_session_participants_user_id_idx ON media_session_participants(user_id);
+
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -175,7 +223,17 @@ BEFORE UPDATE ON channels
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
+CREATE TRIGGER channel_messages_set_updated_at
+BEFORE UPDATE ON channel_messages
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
 CREATE TRIGGER roles_set_updated_at
 BEFORE UPDATE ON roles
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER media_sessions_set_updated_at
+BEFORE UPDATE ON media_sessions
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
