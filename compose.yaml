@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:18.3
+    container_name: voice-stream-postgres
+    environment:
+      POSTGRES_DB: voice_stream
+      POSTGRES_USER: voice_stream
+      POSTGRES_PASSWORD: voice_stream
+    ports:
+      - "5432:5432"
+    volumes:
+      - voice_stream_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice_stream -d voice_stream"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  voice_stream_postgres_data:
