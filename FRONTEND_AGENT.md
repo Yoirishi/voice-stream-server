@@ -206,7 +206,7 @@ Authorization: Bearer <accessToken>
 
 ```json
 {
-  "query": "query { channels { groups { id name type channels { id name type } } ungroupedChannels { id name type } } }"
+  "query": "query { myChannels { groups { id name type channels { id name type role { kind name } permissions { canView canSendMessage } } } ungroupedChannels { id name type } } }"
 }
 ```
 
@@ -254,15 +254,24 @@ Nuances:
 - Loads the user from the database, not only from token payload.
 - Does not expose `email`, `passwordHash`, session metadata, or refresh token data.
 
-### Query `channels`
+### Query `myChannels`
 
-Returns the channel tree visible to the caller. Access filtering is not implemented yet, so currently this is effectively the full tree.
+Returns the current user's channel tree. This is the preferred channel list for the client.
+
+Filtering rules:
+
+- Requires `Authorization: Bearer <accessToken>`.
+- Starts from active `channel_members` rows for the current user.
+- Computes effective permissions from assigned roles and `role_permissions`.
+- Requires effective `channel.view`; channels without it are excluded.
+- Private channels are not returned unless the current user is a member with `channel.view`.
+- `DENY` wins over `ALLOW`; `OWNER` role is treated as all permissions allowed.
 
 Query:
 
 ```graphql
-query Channels {
-  channels {
+query MyChannels {
+  myChannels {
     groups {
       id
       name
@@ -277,6 +286,22 @@ query Channels {
         privateChannel
         voiceUserLimit
         voiceBitrate
+        role {
+          id
+          channelId
+          name
+          kind
+          colorHex
+          position
+          system
+        }
+        permissions {
+          canView
+          canSendMessage
+          canConnectVoice
+          canManageChannel
+          canShareScreen
+        }
       }
     }
     ungroupedChannels {
@@ -288,6 +313,22 @@ query Channels {
       privateChannel
       voiceUserLimit
       voiceBitrate
+      role {
+        id
+        channelId
+        name
+        kind
+        colorHex
+        position
+        system
+      }
+      permissions {
+        canView
+        canSendMessage
+        canConnectVoice
+        canManageChannel
+        canShareScreen
+      }
     }
   }
 }
@@ -296,20 +337,20 @@ query Channels {
 Shape:
 
 ```ts
-type ChannelDirectory = {
-  groups: ChannelGroupView[];
-  ungroupedChannels: ChannelView[];
+type MyChannelDirectory = {
+  groups: MyChannelGroupView[];
+  ungroupedChannels: MyChannelView[];
 };
 
-type ChannelGroupView = {
+type MyChannelGroupView = {
   id: string;
   name: string;
   type: 'TEXT' | 'VOICE';
   position: number;
-  channels: ChannelView[];
+  channels: MyChannelView[];
 };
 
-type ChannelView = {
+type MyChannelView = {
   id: string;
   name: string;
   type: 'TEXT' | 'VOICE';
@@ -318,6 +359,16 @@ type ChannelView = {
   privateChannel: boolean;
   voiceUserLimit: number | null;
   voiceBitrate: number | null;
+  role: RoleView | null;
+  permissions: ChannelPermissionsView;
+};
+
+type ChannelPermissionsView = {
+  canView: boolean;
+  canSendMessage: boolean;
+  canConnectVoice: boolean;
+  canManageChannel: boolean;
+  canShareScreen: boolean;
 };
 ```
 
@@ -326,6 +377,12 @@ Nuances:
 - Groups are ordered by `position`, then `name`.
 - Channels are ordered by `position`, then `name`.
 - Voice-only fields are `voiceUserLimit` and `voiceBitrate`; they should be null for text channels.
+- `canSendMessage` is only true for `TEXT` channels with `message.send`.
+- `canConnectVoice` and `canShareScreen` are only true for `VOICE` channels with the matching permissions.
+
+### Query `channels`
+
+Legacy/basic visible channel tree. It now uses the same access filtering as `myChannels`, but does not include the current user's role or computed permissions. Prefer `myChannels` for new UI work.
 
 ### Query `channelRoles(channelId)`
 

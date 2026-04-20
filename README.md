@@ -102,6 +102,7 @@ Current GraphQL entry points:
 GraphQL operations require `Authorization: Bearer <accessToken>`.
 
 - `me`
+- `myChannels`
 - `channels`
 - `channelRoles(channelId)`
 - `channelMessages(channelId, limit)`

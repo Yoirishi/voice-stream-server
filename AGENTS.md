@@ -14,6 +14,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Frontend-facing API details live in `FRONTEND_AGENT.md`; read it before changing client contracts.
 - GraphQL uses bearer access tokens through `AuthContext`; do not accept caller user ids from GraphQL inputs.
 - GraphQL `me` returns the current safe `AuthUserView` from the bearer token and database user row.
+- GraphQL `myChannels` is the frontend channel tree. It starts from `channel_members`, requires effective `channel.view`, hides private channels without access, and returns the caller's primary role plus computed channel permissions.
 - Media is not handled by Quarkus directly. Quarkus issues media join tickets and relays app-level signaling; an external WebRTC SFU should move audio/video/screen packets.
 - Unit tests use JUnit 5 and Mockito-Kotlin. Integration tests can use QuarkusTest, RestAssured, and JDK WebSocket clients.
 - Browser media e2e scaffolding lives in `e2e/media` and runs through `compose.e2e.yaml`; it currently validates fake camera/mic WebRTC flow before an SFU is selected.
@@ -27,6 +28,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Auth responses set an encrypted HttpOnly `voice_stream_session` cookie. The raw refresh token is not exposed in JSON.
 - `POST /api/auth/refresh` reads that cookie, checks the SHA-256 refresh-token hash in `user_sessions`, issues a fresh access token, and rotates the cookie plus stored refresh hash on the same session row.
 - `POST /api/auth/logout` revokes the matching session when the cookie is valid and always clears `voice_stream_session` with `Max-Age=0`.
+- Effective channel permissions currently use assigned channel roles; `DENY` beats `ALLOW`, and `OWNER` is treated as all permissions allowed.
 - Roles are scoped directly to a channel. `OWNER` and `USER` are system role kinds; custom channel roles use `CUSTOM`.
 - Channel access is modeled through channel-scoped roles and `role_permissions`.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.

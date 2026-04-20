@@ -11,6 +11,7 @@ import ru.voicestream.auth.AuthContext
 import ru.voicestream.channel.ChannelCatalogService
 import ru.voicestream.channel.ChannelDirectory
 import ru.voicestream.channel.ChannelMessageView
+import ru.voicestream.channel.MyChannelDirectory
 import ru.voicestream.channel.RoleView
 import ru.voicestream.domain.MediaSessionType
 import ru.voicestream.media.JoinMediaSessionRequest
@@ -28,10 +29,17 @@ class ChannelGraphQLResource(
     private val authContext: AuthContext,
 ) {
     @Query("channels")
-    @Description("Returns the channel tree visible to the current caller.")
+    @Description("Returns the basic channel tree visible to the current caller.")
     fun channels(): ChannelDirectory {
-        authContext.requireUserId()
-        return channelCatalogService.channelDirectory()
+        val userId = authContext.requireUserId()
+        return channelCatalogService.visibleChannelDirectory(userId)
+    }
+
+    @Query("myChannels")
+    @Description("Returns the current caller's channel tree with role and computed permissions.")
+    fun myChannels(): MyChannelDirectory {
+        val userId = authContext.requireUserId()
+        return channelCatalogService.myChannelDirectory(userId)
     }
 
     @Query("channelRoles")
