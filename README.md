@@ -34,7 +34,10 @@ Useful local URLs:
 - GraphQL UI: <http://localhost:8080/q/graphql-ui/>
 - Register: `POST http://localhost:8080/api/auth/register`
 - Login: `POST http://localhost:8080/api/auth/login`
+- Refresh: `POST http://localhost:8080/api/auth/refresh`
 - Signaling WebSocket: `ws://localhost:8080/ws/signaling/{mediaSessionId}?token={mediaToken}`
+
+Frontend/API agent notes live in `FRONTEND_AGENT.md`.
 
 Flyway migrations live in `src/main/resources/db/migration`. Hibernate entities mirror the initial schema, but Flyway owns schema creation and updates.
 
@@ -66,7 +69,13 @@ POST /api/auth/login
 }
 ```
 
+```http
+POST /api/auth/refresh
+Cookie: voice_stream_session=<encrypted-refresh-token>
+```
+
 Auth can be configured with `AUTH_TOKEN_SECRET`, `AUTH_ACCESS_TOKEN_TTL_SECONDS`, `AUTH_REFRESH_TOKEN_TTL_SECONDS`, and `AUTH_PASSWORD_HASH_ITERATIONS`.
+Session cookies are encrypted with `AUTH_SESSION_COOKIE_ENCRYPTION_KEY` and returned as an HttpOnly `voice_stream_session` cookie. Refresh rotates the cookie and the stored `user_sessions.refresh_token_hash`.
 
 ## Tests
 
@@ -84,6 +93,9 @@ docker compose -f compose.e2e.yaml up --abort-on-container-exit --exit-code-from
 
 Current GraphQL entry points:
 
+GraphQL operations require `Authorization: Bearer <accessToken>`.
+
+- `me`
 - `channels`
 - `channelRoles(channelId)`
 - `channelMessages(channelId, limit)`

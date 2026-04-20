@@ -21,9 +21,18 @@ data class AuthResponse(
     val tokenType: String = "Bearer",
     val accessToken: String,
     val accessTokenExpiresAt: OffsetDateTime,
-    val refreshToken: String,
     val refreshTokenExpiresAt: OffsetDateTime,
     val user: AuthUserView,
+)
+
+data class AuthResult(
+    val response: AuthResponse,
+    val session: AuthSessionCookie,
+)
+
+data class AuthSessionCookie(
+    val refreshToken: String,
+    val expiresAt: OffsetDateTime,
 )
 
 data class AuthUserView(

@@ -5,7 +5,9 @@ import org.eclipse.microprofile.config.inject.ConfigProperty
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.Base64
 import java.util.UUID
 import javax.crypto.Mac
@@ -26,11 +28,14 @@ class AuthTokenService {
 
     fun issueAccessToken(userId: UUID, username: String): IssuedAccessToken {
         val expiresAt = OffsetDateTime.now().plusSeconds(accessTokenTtlSeconds)
+        val tokenIdBytes = ByteArray(ACCESS_TOKEN_ID_BYTES)
+        secureRandom.nextBytes(tokenIdBytes)
         val payload = listOf(
             "v1",
             userId.toString(),
             username,
             expiresAt.toInstant().epochSecond.toString(),
+            base64Url(tokenIdBytes),
         ).joinToString("|")
         val encodedPayload = base64Url(payload.toByteArray(StandardCharsets.UTF_8))
         val signature = sign(encodedPayload)
@@ -38,6 +43,42 @@ class AuthTokenService {
         return IssuedAccessToken(
             token = "$encodedPayload.$signature",
             expiresAt = expiresAt,
+        )
+    }
+
+    fun verifyAccessToken(token: String): AuthPrincipal? {
+        val parts = token.split(".")
+        if (parts.size != 2) {
+            return null
+        }
+
+        val expectedSignature = sign(parts[0])
+        if (!MessageDigest.isEqual(
+                expectedSignature.toByteArray(StandardCharsets.UTF_8),
+                parts[1].toByteArray(StandardCharsets.UTF_8),
+            )
+        ) {
+            return null
+        }
+
+        val payload = runCatching {
+            String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8).split("|")
+        }.getOrNull() ?: return null
+
+        if (payload.size !in 4..5 || payload[0] != ACCESS_TOKEN_VERSION) {
+            return null
+        }
+
+        val userId = runCatching { UUID.fromString(payload[1]) }.getOrNull() ?: return null
+        val expiresAtEpoch = payload[3].toLongOrNull() ?: return null
+        if (OffsetDateTime.now().toInstant().epochSecond > expiresAtEpoch) {
+            return null
+        }
+
+        return AuthPrincipal(
+            userId = userId,
+            username = payload[2],
+            expiresAt = OffsetDateTime.ofInstant(Instant.ofEpochSecond(expiresAtEpoch), ZoneOffset.UTC),
         )
     }
 
@@ -69,9 +110,17 @@ class AuthTokenService {
         Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
     companion object {
+        private const val ACCESS_TOKEN_VERSION = "v1"
+        private const val ACCESS_TOKEN_ID_BYTES = 16
         private const val REFRESH_TOKEN_BYTES = 32
     }
 }
+
+data class AuthPrincipal(
+    val userId: UUID,
+    val username: String,
+    val expiresAt: OffsetDateTime,
+)
 
 data class IssuedAccessToken(
     val token: String,

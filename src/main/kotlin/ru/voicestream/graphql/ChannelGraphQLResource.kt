@@ -7,6 +7,7 @@ import org.eclipse.microprofile.graphql.Input
 import org.eclipse.microprofile.graphql.Mutation
 import org.eclipse.microprofile.graphql.Name
 import org.eclipse.microprofile.graphql.Query
+import ru.voicestream.auth.AuthContext
 import ru.voicestream.channel.ChannelCatalogService
 import ru.voicestream.channel.ChannelDirectory
 import ru.voicestream.channel.ChannelMessageView
@@ -24,36 +25,45 @@ import java.util.UUID
 class ChannelGraphQLResource(
     private val channelCatalogService: ChannelCatalogService,
     private val mediaSessionService: MediaSessionService,
+    private val authContext: AuthContext,
 ) {
     @Query("channels")
     @Description("Returns the channel tree visible to the current caller.")
-    fun channels(): ChannelDirectory =
-        channelCatalogService.channelDirectory()
+    fun channels(): ChannelDirectory {
+        authContext.requireUserId()
+        return channelCatalogService.channelDirectory()
+    }
 
     @Query("channelRoles")
     @Description("Returns role basics for a channel visible to the current caller.")
-    fun channelRoles(@Name("channelId") channelId: UUID): List<RoleView> =
-        channelCatalogService.roles(channelId)
+    fun channelRoles(@Name("channelId") channelId: UUID): List<RoleView> {
+        authContext.requireUserId()
+        return channelCatalogService.roles(channelId)
+    }
 
     @Query("channelMessages")
     @Description("Returns recent text messages from a channel visible to the current caller.")
     fun channelMessages(
         @Name("channelId") channelId: UUID,
         @Name("limit") limit: Int?,
-    ): List<ChannelMessageView> =
-        channelCatalogService.messages(channelId, limit ?: 50)
+    ): List<ChannelMessageView> {
+        authContext.requireUserId()
+        return channelCatalogService.messages(channelId, limit ?: 50)
+    }
 
     @Query("activeMediaSessions")
     @Description("Returns active voice or screen-share sessions for a channel.")
-    fun activeMediaSessions(@Name("channelId") channelId: UUID): List<MediaSessionView> =
-        mediaSessionService.activeSessions(channelId)
+    fun activeMediaSessions(@Name("channelId") channelId: UUID): List<MediaSessionView> {
+        authContext.requireUserId()
+        return mediaSessionService.activeSessions(channelId)
+    }
 
     @Mutation("sendChannelMessage")
     @Description("Stores a text message in a TEXT channel.")
     fun sendChannelMessage(input: SendChannelMessageInput): ChannelMessageView =
         channelCatalogService.sendMessage(
             channelId = input.channelId,
-            authorUserId = input.authorUserId,
+            authorUserId = authContext.requireUserId(),
             body = input.body,
         )
 
@@ -63,7 +73,7 @@ class ChannelGraphQLResource(
         mediaSessionService.startSession(
             StartMediaSessionRequest(
                 channelId = input.channelId,
-                userId = input.userId,
+                userId = authContext.requireUserId(),
                 type = input.type,
                 canPublishAudio = input.canPublishAudio,
                 canPublishScreen = input.canPublishScreen,
@@ -76,7 +86,7 @@ class ChannelGraphQLResource(
         mediaSessionService.joinSession(
             JoinMediaSessionRequest(
                 mediaSessionId = input.mediaSessionId,
-                userId = input.userId,
+                userId = authContext.requireUserId(),
                 canPublishAudio = input.canPublishAudio,
                 canPublishScreen = input.canPublishScreen,
                 canSubscribe = input.canSubscribe,
@@ -87,14 +97,12 @@ class ChannelGraphQLResource(
 @Input
 class SendChannelMessageInput {
     lateinit var channelId: UUID
-    lateinit var authorUserId: UUID
     lateinit var body: String
 }
 
 @Input
 class StartMediaSessionInput {
     lateinit var channelId: UUID
-    lateinit var userId: UUID
     var type: MediaSessionType = MediaSessionType.VOICE
     var canPublishAudio: Boolean = true
     var canPublishScreen: Boolean = false
@@ -103,7 +111,6 @@ class StartMediaSessionInput {
 @Input
 class JoinMediaSessionInput {
     lateinit var mediaSessionId: UUID
-    lateinit var userId: UUID
     var canPublishAudio: Boolean = false
     var canPublishScreen: Boolean = false
     var canSubscribe: Boolean = true

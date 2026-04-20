@@ -15,8 +15,50 @@ class AuthService(
     private val passwordHashService: PasswordHashService,
     private val authTokenService: AuthTokenService,
 ) {
+    fun currentUser(userId: UUID): AuthUserView {
+        val user = entityManager.find(UserEntity::class.java, userId) ?: throw AuthRequiredException()
+        if (user.disabledAt != null) {
+            throw AuthForbiddenException("User is disabled.")
+        }
+
+        return user.toAuthView()
+    }
+
     @Transactional
-    fun register(request: RegisterRequest, userAgent: String?, ipAddress: String?): AuthResponse {
+    fun refresh(rawRefreshToken: String): AuthResult {
+        val now = OffsetDateTime.now()
+        val session = findActiveSessionByRefreshToken(rawRefreshToken, now)
+        val user = entityManager.find(UserEntity::class.java, requireNotNull(session.userId))
+            ?: throw AuthUnauthorizedException()
+
+        if (user.disabledAt != null) {
+            throw AuthForbiddenException("User is disabled.")
+        }
+
+        val userId = requireNotNull(user.id)
+        val accessToken = authTokenService.issueAccessToken(userId, user.username)
+        val rotatedRefreshToken = authTokenService.issueRefreshToken()
+
+        session.refreshTokenHash = rotatedRefreshToken.tokenHash
+        session.expiresAt = rotatedRefreshToken.expiresAt
+        session.lastSeenAt = now
+
+        return AuthResult(
+            response = AuthResponse(
+                accessToken = accessToken.token,
+                accessTokenExpiresAt = accessToken.expiresAt,
+                refreshTokenExpiresAt = rotatedRefreshToken.expiresAt,
+                user = user.toAuthView(),
+            ),
+            session = AuthSessionCookie(
+                refreshToken = rotatedRefreshToken.token,
+                expiresAt = rotatedRefreshToken.expiresAt,
+            ),
+        )
+    }
+
+    @Transactional
+    fun register(request: RegisterRequest, userAgent: String?, ipAddress: String?): AuthResult {
         val username = normalizeUsername(request.username)
         val displayName = normalizeDisplayName(request.displayName)
         val email = normalizeEmail(request.email)
@@ -50,7 +92,7 @@ class AuthService(
     }
 
     @Transactional
-    fun login(request: LoginRequest, userAgent: String?, ipAddress: String?): AuthResponse {
+    fun login(request: LoginRequest, userAgent: String?, ipAddress: String?): AuthResult {
         val login = request.login.trim()
         val user = findUserByUsernameOrEmail(login) ?: throw AuthUnauthorizedException()
 
@@ -69,7 +111,7 @@ class AuthService(
         deviceName: String?,
         userAgent: String?,
         ipAddress: String?,
-    ): AuthResponse {
+    ): AuthResult {
         val userId = requireNotNull(user.id)
         val accessToken = authTokenService.issueAccessToken(userId, user.username)
         val refreshToken = authTokenService.issueRefreshToken()
@@ -88,12 +130,17 @@ class AuthService(
         }
         entityManager.persist(session)
 
-        return AuthResponse(
-            accessToken = accessToken.token,
-            accessTokenExpiresAt = accessToken.expiresAt,
-            refreshToken = refreshToken.token,
-            refreshTokenExpiresAt = refreshToken.expiresAt,
-            user = user.toAuthView(),
+        return AuthResult(
+            response = AuthResponse(
+                accessToken = accessToken.token,
+                accessTokenExpiresAt = accessToken.expiresAt,
+                refreshTokenExpiresAt = refreshToken.expiresAt,
+                user = user.toAuthView(),
+            ),
+            session = AuthSessionCookie(
+                refreshToken = refreshToken.token,
+                expiresAt = refreshToken.expiresAt,
+            ),
         )
     }
 
@@ -112,6 +159,31 @@ class AuthService(
         } catch (_: NoResultException) {
             null
         }
+
+    private fun findActiveSessionByRefreshToken(rawRefreshToken: String, now: OffsetDateTime): UserSessionEntity {
+        val tokenHash = authTokenService.sha256TokenHash(rawRefreshToken)
+        val session = try {
+            entityManager
+                .createQuery(
+                    """
+                    select s from UserSessionEntity s
+                    where s.refreshTokenHash = :tokenHash
+                    and s.revokedAt is null
+                    """.trimIndent(),
+                    UserSessionEntity::class.java,
+                )
+                .setParameter("tokenHash", tokenHash)
+                .singleResult
+        } catch (_: NoResultException) {
+            throw AuthUnauthorizedException()
+        }
+
+        if (!session.expiresAt.isAfter(now)) {
+            throw AuthUnauthorizedException()
+        }
+
+        return session
+    }
 
     private fun UserEntity.toAuthView(): AuthUserView =
         AuthUserView(

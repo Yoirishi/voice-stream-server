@@ -15,18 +15,21 @@ import jakarta.ws.rs.core.Response
 @Produces(MediaType.APPLICATION_JSON)
 class AuthResource(
     private val authService: AuthService,
+    private val sessionCookieService: SessionCookieService,
 ) {
     @POST
     @Path("/register")
     fun register(
         request: RegisterRequest,
         @Context headers: HttpHeaders,
-    ): AuthResponse =
+    ): Response =
         handleAuthErrors {
-            authService.register(
-                request = request,
-                userAgent = headers.getHeaderString(HttpHeaders.USER_AGENT),
-                ipAddress = clientIp(headers),
+            authResponse(
+                authService.register(
+                    request = request,
+                    userAgent = headers.getHeaderString(HttpHeaders.USER_AGENT),
+                    ipAddress = clientIp(headers),
+                ),
             )
         }
 
@@ -35,14 +38,32 @@ class AuthResource(
     fun login(
         request: LoginRequest,
         @Context headers: HttpHeaders,
-    ): AuthResponse =
+    ): Response =
         handleAuthErrors {
-            authService.login(
-                request = request,
-                userAgent = headers.getHeaderString(HttpHeaders.USER_AGENT),
-                ipAddress = clientIp(headers),
+            authResponse(
+                authService.login(
+                    request = request,
+                    userAgent = headers.getHeaderString(HttpHeaders.USER_AGENT),
+                    ipAddress = clientIp(headers),
+                ),
             )
         }
+
+    @POST
+    @Path("/refresh")
+    @Consumes(MediaType.WILDCARD)
+    fun refresh(@Context headers: HttpHeaders): Response =
+        handleAuthErrors {
+            val refreshToken = sessionCookieService.readRefreshToken(headers)
+                ?: throw AuthUnauthorizedException()
+
+            authResponse(authService.refresh(refreshToken))
+        }
+
+    private fun authResponse(result: AuthResult): Response =
+        Response.ok(result.response)
+            .header(HttpHeaders.SET_COOKIE, sessionCookieService.buildSessionCookie(result.session))
+            .build()
 
     private fun <T> handleAuthErrors(block: () -> T): T =
         try {
