@@ -38,6 +38,20 @@ class SessionCookieServiceTest {
         assertNull(otherCookieService.decrypt(encryptedValue))
     }
 
+    @Test
+    fun `clear session cookie expires http only cookie`() {
+        val service = service(cookieName = "voice_stream_session")
+
+        val cookie = service.clearSessionCookie()
+
+        assertTrue(cookie.contains("voice_stream_session="))
+        assertTrue(cookie.contains("Max-Age=0"))
+        assertTrue(cookie.contains("Expires=Thu, 01 Jan 1970 00:00:00 GMT"))
+        assertTrue(cookie.contains("Path=/"))
+        assertTrue(cookie.contains("HttpOnly"))
+        assertTrue(cookie.contains("SameSite=Lax"))
+    }
+
     private fun service(cookieName: String): SessionCookieService =
         SessionCookieService(
             encryptionKey = "test-session-cookie-encryption-key-change-me",

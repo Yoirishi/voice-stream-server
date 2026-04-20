@@ -10,7 +10,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Quarkus connects to `jdbc:postgresql://localhost:5432/voice_stream` by default.
 - Flyway owns schema changes. Put migrations in `src/main/resources/db/migration`.
 - Hibernate ORM is present and entities mirror `V1__initial_schema.sql`, but do not use `import.sql` or Hibernate schema generation for core schema work.
-- REST auth endpoints live under `POST /api/auth/register`, `POST /api/auth/login`, and `POST /api/auth/refresh`.
+- REST auth endpoints live under `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`, and `POST /api/auth/logout`.
 - Frontend-facing API details live in `FRONTEND_AGENT.md`; read it before changing client contracts.
 - GraphQL uses bearer access tokens through `AuthContext`; do not accept caller user ids from GraphQL inputs.
 - GraphQL `me` returns the current safe `AuthUserView` from the bearer token and database user row.
@@ -26,6 +26,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - User auth stores PBKDF2-SHA256 password hashes and SHA-256 refresh-token hashes.
 - Auth responses set an encrypted HttpOnly `voice_stream_session` cookie. The raw refresh token is not exposed in JSON.
 - `POST /api/auth/refresh` reads that cookie, checks the SHA-256 refresh-token hash in `user_sessions`, issues a fresh access token, and rotates the cookie plus stored refresh hash on the same session row.
+- `POST /api/auth/logout` revokes the matching session when the cookie is valid and always clears `voice_stream_session` with `Max-Age=0`.
 - Roles are scoped directly to a channel. `OWNER` and `USER` are system role kinds; custom channel roles use `CUSTOM`.
 - Channel access is modeled through channel-scoped roles and `role_permissions`.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.

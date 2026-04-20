@@ -45,6 +45,23 @@ class SessionCookieService(
         return attributes.joinToString("; ")
     }
 
+    fun clearSessionCookie(): String {
+        val attributes = mutableListOf(
+            "$cookieName=",
+            "Max-Age=0",
+            "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+            "Path=$cookiePath",
+            "HttpOnly",
+            "SameSite=$cookieSameSite",
+        )
+
+        if (cookieSecure) {
+            attributes += "Secure"
+        }
+
+        return attributes.joinToString("; ")
+    }
+
     fun readRefreshToken(headers: HttpHeaders): String? =
         headers.cookies[cookieName]
             ?.value

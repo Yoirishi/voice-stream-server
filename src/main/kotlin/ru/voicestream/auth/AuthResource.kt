@@ -60,6 +60,19 @@ class AuthResource(
             authResponse(authService.refresh(refreshToken))
         }
 
+    @POST
+    @Path("/logout")
+    @Consumes(MediaType.WILDCARD)
+    fun logout(@Context headers: HttpHeaders): Response =
+        handleAuthErrors {
+            sessionCookieService.readRefreshToken(headers)
+                ?.let(authService::logout)
+
+            Response.noContent()
+                .header(HttpHeaders.SET_COOKIE, sessionCookieService.clearSessionCookie())
+                .build()
+        }
+
     private fun authResponse(result: AuthResult): Response =
         Response.ok(result.response)
             .header(HttpHeaders.SET_COOKIE, sessionCookieService.buildSessionCookie(result.session))

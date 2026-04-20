@@ -30,7 +30,7 @@ Authorization: Bearer <accessToken>
 
 Important MVP limitations:
 
-- There is no logout, password reset, invite, or membership endpoint yet.
+- There is no password reset, invite, or membership endpoint yet.
 - GraphQL mutations no longer accept `userId` / `authorUserId` from the client. They use the access token auth context.
 - Do not expose or persist sensitive fields beyond what auth returns.
 - Refresh/session tokens are not returned in JSON. They are stored as an encrypted HttpOnly cookie.
@@ -150,6 +150,25 @@ Frontend notes:
 - Store the new `accessToken` from the response.
 - Do not expect a `refreshToken` JSON field.
 - If refresh returns `401 auth_invalid_credentials`, clear the local access token and send the user to login.
+
+### `POST /api/auth/logout`
+
+No JSON request body is required.
+
+The backend reads the HttpOnly `voice_stream_session` cookie. If it decrypts to a known non-revoked session, the matching `user_sessions` row gets `revoked_at` set. Logout is intentionally tolerant of missing or already-invalid cookies so the client can always clean up local state.
+
+Success response:
+
+```http
+204 No Content
+Set-Cookie: voice_stream_session=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly; SameSite=Lax
+```
+
+Frontend notes:
+
+- Send cookies with the request, for example `credentials: "include"` in browser `fetch`.
+- Clear the local access token after any successful logout response.
+- After logout, the old session cookie cannot be used for refresh.
 
 ### Auth Error Shape
 
@@ -648,7 +667,6 @@ docker compose -f compose.e2e.yaml up --abort-on-container-exit --exit-code-from
 
 Do not invent these endpoints yet; they are not implemented:
 
-- logout/session revoke
 - channel create/update/delete/reorder
 - channel membership/invites
 - role create/update/delete/assign

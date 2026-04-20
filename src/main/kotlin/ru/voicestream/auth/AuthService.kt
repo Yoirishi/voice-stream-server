@@ -58,6 +58,26 @@ class AuthService(
     }
 
     @Transactional
+    fun logout(rawRefreshToken: String) {
+        val now = OffsetDateTime.now()
+        val tokenHash = authTokenService.sha256TokenHash(rawRefreshToken)
+
+        entityManager
+            .createQuery(
+                """
+                update UserSessionEntity s
+                set s.revokedAt = :now,
+                    s.lastSeenAt = :now
+                where s.refreshTokenHash = :tokenHash
+                and s.revokedAt is null
+                """.trimIndent(),
+            )
+            .setParameter("now", now)
+            .setParameter("tokenHash", tokenHash)
+            .executeUpdate()
+    }
+
+    @Transactional
     fun register(request: RegisterRequest, userAgent: String?, ipAddress: String?): AuthResult {
         val username = normalizeUsername(request.username)
         val displayName = normalizeDisplayName(request.displayName)

@@ -140,6 +140,38 @@ class AuthResourceTest {
     }
 
     @Test
+    fun `logout revokes session and clears session cookie`() {
+        val suffix = UUID.randomUUID().toString().replace("-", "").take(12)
+        val auth = registerAndCapture("logout_$suffix", "logout_$suffix@example.com", "strong-password")
+
+        given()
+            .header("Cookie", auth.sessionCookie)
+            .post("/api/auth/logout")
+            .then()
+            .statusCode(204)
+            .header("Set-Cookie", containsString("voice_stream_session="))
+            .header("Set-Cookie", containsString("Max-Age=0"))
+            .header("Set-Cookie", containsString("HttpOnly"))
+
+        given()
+            .header("Cookie", auth.sessionCookie)
+            .post("/api/auth/refresh")
+            .then()
+            .statusCode(401)
+            .body("error", equalTo("auth_invalid_credentials"))
+    }
+
+    @Test
+    fun `logout clears session cookie without current session`() {
+        given()
+            .post("/api/auth/logout")
+            .then()
+            .statusCode(204)
+            .header("Set-Cookie", containsString("voice_stream_session="))
+            .header("Set-Cookie", containsString("Max-Age=0"))
+    }
+
+    @Test
     fun `register rejects duplicate username`() {
         val suffix = UUID.randomUUID().toString().replace("-", "").take(12)
         register("dup_$suffix", "dup_$suffix@example.com", "strong-password")
