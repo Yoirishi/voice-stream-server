@@ -1,5 +1,6 @@
 package ru.voicestream.channel
 
+import ru.voicestream.auth.AuthUserView
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
@@ -13,6 +14,7 @@ import ru.voicestream.persistence.entity.ChannelMemberRoleEntity
 import ru.voicestream.persistence.entity.ChannelMessageEntity
 import ru.voicestream.persistence.entity.RoleEntity
 import ru.voicestream.persistence.entity.RolePermissionEntity
+import ru.voicestream.persistence.entity.UserEntity
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -87,7 +89,7 @@ class ChannelCatalogService(
                 groupId = channel.groupId,
                 view = channel.toMyView(
                     role = roles.firstOrNull()?.toView(),
-                    permissions = permissions,
+                    permissions = permissions.toView(),
                 ),
             )
         }
@@ -118,6 +120,77 @@ class ChannelCatalogService(
                 .filter { it.groupId == null }
                 .map { it.view },
         )
+    }
+
+    fun channelMembers(channelId: UUID, currentUserId: UUID): List<ChannelMemberView> {
+        requireChannelPermission(channelId, currentUserId, "view channel members") { it.canView }
+        return activeMemberViews(channelId)
+    }
+
+    @Transactional
+    fun addChannelMember(channelId: UUID, userId: UUID, currentUserId: UUID): ChannelMemberView {
+        requireChannelPermission(channelId, currentUserId, "add channel members") { it.canManageMembers }
+        val targetUser = requireActiveUser(userId)
+        val now = OffsetDateTime.now()
+        val userRole = requiredSystemRole(channelId, RoleKind.USER)
+
+        val member = findChannelMember(channelId, userId)?.also { existing ->
+            if (existing.leftAt != null) {
+                existing.leftAt = null
+                existing.joinedAt = now
+            }
+        } ?: ChannelMemberEntity().apply {
+            id = UUID.randomUUID()
+            this.channelId = channelId
+            this.userId = userId
+            joinedAt = now
+            entityManager.persist(this)
+        }
+
+        assignRoleIfMissing(member, userRole)
+        return memberView(requireNotNull(member.id), targetUser)
+    }
+
+    @Transactional
+    fun removeChannelMember(channelId: UUID, userId: UUID, currentUserId: UUID): Boolean {
+        val access = requireChannelPermission(channelId, currentUserId, "remove channel members") { it.canManageMembers }
+        require(requireNotNull(access.channel.ownerUserId) != userId) {
+            "Channel owner cannot be removed."
+        }
+
+        val member = findActiveChannelMember(channelId, userId) ?: return false
+        entityManager
+            .createQuery(
+                "delete from ChannelMemberRoleEntity mr where mr.channelMemberId = :channelMemberId",
+            )
+            .setParameter("channelMemberId", requireNotNull(member.id))
+            .executeUpdate()
+        member.leftAt = OffsetDateTime.now()
+        return true
+    }
+
+    @Transactional
+    fun assignChannelRole(channelMemberId: UUID, roleId: UUID, currentUserId: UUID): ChannelMemberView {
+        val member = requireNotNull(entityManager.find(ChannelMemberEntity::class.java, channelMemberId)) {
+            "Channel member $channelMemberId was not found."
+        }
+        require(member.leftAt == null) { "Channel member $channelMemberId is not active." }
+
+        val channelId = requireNotNull(member.channelId)
+        val access = requireChannelPermission(channelId, currentUserId, "assign channel roles") { it.canManageRoles }
+        val role = requireNotNull(entityManager.find(RoleEntity::class.java, roleId)) {
+            "Role $roleId was not found."
+        }
+
+        require(requireNotNull(role.channelId) == channelId) {
+            "Role $roleId does not belong to channel $channelId."
+        }
+        require(role.kind != RoleKind.OWNER || requireNotNull(member.userId) == requireNotNull(access.channel.ownerUserId)) {
+            "OWNER role can only be assigned to the channel owner."
+        }
+
+        assignRoleIfMissing(member, role)
+        return memberView(channelMemberId)
     }
 
     fun roles(channelId: UUID): List<RoleView> =
@@ -173,6 +246,63 @@ class ChannelCatalogService(
         return message.toView()
     }
 
+    private fun activeMemberViews(channelId: UUID): List<ChannelMemberView> {
+        val members = entityManager
+            .createQuery(
+                """
+                select m from ChannelMemberEntity m
+                where m.channelId = :channelId
+                and m.leftAt is null
+                order by m.joinedAt asc, m.id asc
+                """.trimIndent(),
+                ChannelMemberEntity::class.java,
+            )
+            .setParameter("channelId", channelId)
+            .resultList
+
+        return memberViews(members)
+    }
+
+    private fun memberView(channelMemberId: UUID, user: UserEntity? = null): ChannelMemberView {
+        val member = requireNotNull(entityManager.find(ChannelMemberEntity::class.java, channelMemberId)) {
+            "Channel member $channelMemberId was not found."
+        }
+        val usersById = user?.let { mapOf(requireNotNull(it.id) to it) }.orEmpty()
+        return memberViews(listOf(member), usersById).single()
+    }
+
+    private fun memberViews(
+        members: List<ChannelMemberEntity>,
+        usersById: Map<UUID, UserEntity> = emptyMap(),
+    ): List<ChannelMemberView> {
+        if (members.isEmpty()) {
+            return emptyList()
+        }
+
+        val memberIds = members.map { requireNotNull(it.id) }
+        val resolvedUsersById = if (usersById.isNotEmpty()) {
+            usersById
+        } else {
+            usersById(members.map { requireNotNull(it.userId) })
+        }
+        val rolesByMemberId = rolesByMemberId(memberIds)
+
+        return members.map { member ->
+            val memberId = requireNotNull(member.id)
+            val userId = requireNotNull(member.userId)
+            ChannelMemberView(
+                id = memberId,
+                channelId = requireNotNull(member.channelId),
+                user = requireNotNull(resolvedUsersById[userId]) {
+                    "User $userId was not found."
+                }.toAuthView(),
+                displayName = member.displayName,
+                joinedAt = member.joinedAt,
+                roles = rolesByMemberId[memberId].orEmpty().map { it.toView() },
+            )
+        }
+    }
+
     private fun activeChannelMembers(userId: UUID): List<ChannelMemberEntity> =
         entityManager
             .createQuery(
@@ -185,6 +315,64 @@ class ChannelCatalogService(
             )
             .setParameter("userId", userId)
             .resultList
+
+    private fun findChannelMember(channelId: UUID, userId: UUID): ChannelMemberEntity? =
+        entityManager
+            .createQuery(
+                """
+                select m from ChannelMemberEntity m
+                where m.channelId = :channelId
+                and m.userId = :userId
+                """.trimIndent(),
+                ChannelMemberEntity::class.java,
+            )
+            .setParameter("channelId", channelId)
+            .setParameter("userId", userId)
+            .resultList
+            .firstOrNull()
+
+    private fun findActiveChannelMember(channelId: UUID, userId: UUID): ChannelMemberEntity? =
+        findChannelMember(channelId, userId)
+            ?.takeIf { it.leftAt == null }
+
+    private fun requiredSystemRole(channelId: UUID, roleKind: RoleKind): RoleEntity =
+        entityManager
+            .createQuery(
+                """
+                select r from RoleEntity r
+                where r.channelId = :channelId
+                and r.kind = :roleKind
+                """.trimIndent(),
+                RoleEntity::class.java,
+            )
+            .setParameter("channelId", channelId)
+            .setParameter("roleKind", roleKind)
+            .resultList
+            .firstOrNull()
+            ?: throw IllegalArgumentException("System role $roleKind was not found for channel $channelId.")
+
+    private fun usersById(userIds: Collection<UUID>): Map<UUID, UserEntity> {
+        if (userIds.isEmpty()) {
+            return emptyMap()
+        }
+
+        return entityManager
+            .createQuery(
+                "select u from UserEntity u where u.id in :userIds",
+                UserEntity::class.java,
+            )
+            .setParameter("userIds", userIds)
+            .resultList
+            .associateBy { requireNotNull(it.id) }
+    }
+
+    private fun requireActiveUser(userId: UUID): UserEntity {
+        val user = requireNotNull(entityManager.find(UserEntity::class.java, userId)) {
+            "User $userId was not found."
+        }
+        require(user.disabledAt == null) { "User $userId is disabled." }
+        return user
+    }
 
     private fun channels(channelIds: Collection<UUID>): List<ChannelEntity> {
         if (channelIds.isEmpty()) {
@@ -278,11 +466,82 @@ class ChannelCatalogService(
             .groupBy { requireNotNull(it.roleId) }
     }
 
+    private fun requireChannelPermission(
+        channelId: UUID,
+        currentUserId: UUID,
+        action: String,
+        predicate: (EffectiveChannelPermissions) -> Boolean,
+    ): ChannelActorAccess {
+        val access = actorAccess(channelId, currentUserId)
+        require(predicate(access.permissions)) {
+            "Current user cannot $action in channel $channelId."
+        }
+        return access
+    }
+
+    private fun actorAccess(channelId: UUID, currentUserId: UUID): ChannelActorAccess {
+        val channel = requireNotNull(entityManager.find(ChannelEntity::class.java, channelId)) {
+            "Channel $channelId was not found."
+        }
+
+        if (requireNotNull(channel.ownerUserId) == currentUserId) {
+            return ChannelActorAccess(
+                channel = channel,
+                permissions = EffectiveChannelPermissions.full(channel.type),
+            )
+        }
+
+        val member = findActiveChannelMember(channelId, currentUserId)
+            ?: throw IllegalArgumentException("Current user is not a member of channel $channelId.")
+        val memberId = requireNotNull(member.id)
+        val roles = rolesByMemberId(listOf(memberId))[memberId].orEmpty()
+        val permissions = effectivePermissions(
+            channel = channel,
+            roles = roles,
+            permissionsByRoleId = permissionsByRoleId(roles.map { requireNotNull(it.id) }.toSet()),
+        )
+
+        return ChannelActorAccess(
+            channel = channel,
+            permissions = permissions,
+        )
+    }
+
+    private fun assignRoleIfMissing(member: ChannelMemberEntity, role: RoleEntity) {
+        val memberId = requireNotNull(member.id)
+        val roleId = requireNotNull(role.id)
+        val existing = entityManager
+            .createQuery(
+                """
+                select mr from ChannelMemberRoleEntity mr
+                where mr.channelMemberId = :channelMemberId
+                and mr.roleId = :roleId
+                """.trimIndent(),
+                ChannelMemberRoleEntity::class.java,
+            )
+            .setParameter("channelMemberId", memberId)
+            .setParameter("roleId", roleId)
+            .resultList
+            .firstOrNull()
+        if (existing != null) {
+            return
+        }
+
+        entityManager.persist(
+            ChannelMemberRoleEntity().apply {
+                channelId = requireNotNull(member.channelId)
+                channelMemberId = memberId
+                this.roleId = roleId
+                assignedAt = OffsetDateTime.now()
+            },
+        )
+    }
+
     private fun effectivePermissions(
         channel: ChannelEntity,
         roles: List<RoleEntity>,
         permissionsByRoleId: Map<UUID, List<RolePermissionEntity>>,
-    ): ChannelPermissionsView {
+    ): EffectiveChannelPermissions {
         val hasOwnerRole = roles.any { it.kind == RoleKind.OWNER }
         val permissionsByKey = roles
             .flatMap { role -> permissionsByRoleId[requireNotNull(role.id)].orEmpty() }
@@ -297,14 +556,14 @@ class ChannelCatalogService(
             return PermissionEffect.DENY !in effects && PermissionEffect.ALLOW in effects
         }
 
-        val canView = isAllowed(PERMISSION_CHANNEL_VIEW)
-
-        return ChannelPermissionsView(
-            canView = canView,
+        return EffectiveChannelPermissions(
+            canView = isAllowed(PERMISSION_CHANNEL_VIEW),
             canSendMessage = channel.type == ChannelType.TEXT && isAllowed(PERMISSION_MESSAGE_SEND),
             canConnectVoice = channel.type == ChannelType.VOICE && isAllowed(PERMISSION_VOICE_CONNECT),
             canManageChannel = isAllowed(PERMISSION_CHANNEL_MANAGE),
             canShareScreen = channel.type == ChannelType.VOICE && isAllowed(PERMISSION_SCREEN_SHARE),
+            canManageMembers = isAllowed(PERMISSION_MEMBER_MANAGE),
+            canManageRoles = isAllowed(PERMISSION_ROLE_MANAGE),
         )
     }
 
@@ -398,17 +657,66 @@ class ChannelCatalogService(
             .thenByDescending { it.position }
             .thenBy { it.name }
 
+    private fun EffectiveChannelPermissions.toView(): ChannelPermissionsView =
+        ChannelPermissionsView(
+            canView = canView,
+            canSendMessage = canSendMessage,
+            canConnectVoice = canConnectVoice,
+            canManageChannel = canManageChannel,
+            canShareScreen = canShareScreen,
+        )
+
+    private fun UserEntity.toAuthView(): AuthUserView =
+        AuthUserView(
+            id = requireNotNull(id),
+            username = username,
+            displayName = displayName,
+            avatarMediaKey = avatarMediaKey,
+        )
+
+    private data class ChannelActorAccess(
+        val channel: ChannelEntity,
+        val permissions: EffectiveChannelPermissions,
+    )
+
+    private data class EffectiveChannelPermissions(
+        val canView: Boolean,
+        val canSendMessage: Boolean,
+        val canConnectVoice: Boolean,
+        val canManageChannel: Boolean,
+        val canShareScreen: Boolean,
+        val canManageMembers: Boolean,
+        val canManageRoles: Boolean,
+    ) {
+        companion object {
+            fun full(channelType: ChannelType): EffectiveChannelPermissions =
+                EffectiveChannelPermissions(
+                    canView = true,
+                    canSendMessage = channelType == ChannelType.TEXT,
+                    canConnectVoice = channelType == ChannelType.VOICE,
+                    canManageChannel = true,
+                    canShareScreen = channelType == ChannelType.VOICE,
+                    canManageMembers = true,
+                    canManageRoles = true,
+                )
+        }
+    }
+
     companion object {
         private const val PERMISSION_CHANNEL_MANAGE = "channel.manage"
         private const val PERMISSION_CHANNEL_VIEW = "channel.view"
+        private const val PERMISSION_MEMBER_MANAGE = "member.manage"
         private const val PERMISSION_MESSAGE_SEND = "message.send"
+        private const val PERMISSION_ROLE_MANAGE = "role.manage"
         private const val PERMISSION_VOICE_CONNECT = "voice.connect"
         private const val PERMISSION_SCREEN_SHARE = "screen.share"
 
         private val CLIENT_PERMISSION_KEYS = setOf(
             PERMISSION_CHANNEL_MANAGE,
             PERMISSION_CHANNEL_VIEW,
+            PERMISSION_MEMBER_MANAGE,
             PERMISSION_MESSAGE_SEND,
+            PERMISSION_ROLE_MANAGE,
             PERMISSION_VOICE_CONNECT,
             PERMISSION_SCREEN_SHARE,
         )
@@ -471,6 +779,15 @@ data class ChannelPermissionsView(
     val canConnectVoice: Boolean,
     val canManageChannel: Boolean,
     val canShareScreen: Boolean,
+)
+
+data class ChannelMemberView(
+    val id: UUID,
+    val channelId: UUID,
+    val user: AuthUserView,
+    val displayName: String?,
+    val joinedAt: OffsetDateTime,
+    val roles: List<RoleView>,
 )
 
 data class RoleView(

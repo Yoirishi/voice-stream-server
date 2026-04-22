@@ -104,9 +104,13 @@ GraphQL operations require `Authorization: Bearer <accessToken>`.
 - `me`
 - `myChannels`
 - `channels`
+- `channelMembers(channelId)`
 - `channelRoles(channelId)`
 - `channelMessages(channelId, limit)`
 - `activeMediaSessions(channelId)`
+- `addChannelMember(channelId, userId)`
+- `removeChannelMember(channelId, userId)`
+- `assignChannelRole(channelMemberId, roleId)`
 - `sendChannelMessage(input)`
 - `startMediaSession(input)`
 - `joinMediaSession(input)`

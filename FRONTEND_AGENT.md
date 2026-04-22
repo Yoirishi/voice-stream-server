@@ -420,7 +420,140 @@ Nuances:
 
 - Roles are scoped directly to channels.
 - `OWNER` and `USER` are system roles.
-- `CUSTOM` roles are planned for user-created roles, but role management mutations do not exist yet.
+- `CUSTOM` roles are planned for user-created roles, but only assignment exists yet; create/update/delete mutations do not exist yet.
+
+### Query `channelMembers(channelId)`
+
+Returns active members of a visible channel.
+
+Rules:
+
+- Requires `Authorization: Bearer <accessToken>`.
+- Requires effective `channel.view` in the channel.
+- Returns only active members where `leftAt` is still null.
+- Roles are returned already expanded and sorted by priority.
+
+Query:
+
+```graphql
+query ChannelMembers($channelId: UUID!) {
+  channelMembers(channelId: $channelId) {
+    id
+    channelId
+    user {
+      id
+      username
+      displayName
+      avatarMediaKey
+    }
+    displayName
+    joinedAt
+    roles {
+      id
+      channelId
+      name
+      kind
+      colorHex
+      position
+      system
+    }
+  }
+}
+```
+
+Shape:
+
+```ts
+type ChannelMemberView = {
+  id: string;
+  channelId: string;
+  user: AuthUserView;
+  displayName: string | null;
+  joinedAt: string;
+  roles: RoleView[];
+};
+```
+
+### Mutation `addChannelMember(channelId, userId)`
+
+Adds a user to the channel or reactivates a previously removed member.
+
+Rules:
+
+- Requires effective `member.manage`.
+- The target user must exist and not be disabled.
+- Automatically assigns the system `USER` role for that channel.
+- Returns the active member view after the add/reactivate.
+
+Example:
+
+```graphql
+mutation AddChannelMember($channelId: UUID!, $userId: UUID!) {
+  addChannelMember(channelId: $channelId, userId: $userId) {
+    id
+    channelId
+    user {
+      id
+      username
+      displayName
+    }
+    roles {
+      id
+      name
+      kind
+    }
+  }
+}
+```
+
+### Mutation `removeChannelMember(channelId, userId)`
+
+Marks a member as removed from the channel.
+
+Rules:
+
+- Requires effective `member.manage`.
+- Clears assigned `channel_member_roles` for that member.
+- Returns `true` when an active member was removed, `false` when the user was not an active member.
+- Refuses to remove the channel owner.
+
+Example:
+
+```graphql
+mutation RemoveChannelMember($channelId: UUID!, $userId: UUID!) {
+  removeChannelMember(channelId: $channelId, userId: $userId)
+}
+```
+
+### Mutation `assignChannelRole(channelMemberId, roleId)`
+
+Assigns a role to an active channel member.
+
+Rules:
+
+- Requires effective `role.manage`.
+- The member and role must belong to the same channel.
+- Duplicate assignments are ignored and return the current member view.
+- `OWNER` can only be assigned to the channel owner.
+
+Example:
+
+```graphql
+mutation AssignChannelRole($channelMemberId: UUID!, $roleId: UUID!) {
+  assignChannelRole(channelMemberId: $channelMemberId, roleId: $roleId) {
+    id
+    user {
+      id
+      username
+    }
+    roles {
+      id
+      name
+      kind
+    }
+  }
+}
+```
 
 ### Query `channelMessages(channelId, limit)`
 
@@ -725,8 +858,8 @@ docker compose -f compose.e2e.yaml up --abort-on-container-exit --exit-code-from
 Do not invent these endpoints yet; they are not implemented:
 
 - channel create/update/delete/reorder
-- channel membership/invites
-- role create/update/delete/assign
+- channel invites
+- role create/update/delete
 - permission editing
 - realtime text message subscriptions
 - media session end/leave endpoint

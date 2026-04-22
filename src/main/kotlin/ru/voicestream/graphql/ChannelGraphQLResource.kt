@@ -10,6 +10,7 @@ import org.eclipse.microprofile.graphql.Query
 import ru.voicestream.auth.AuthContext
 import ru.voicestream.channel.ChannelCatalogService
 import ru.voicestream.channel.ChannelDirectory
+import ru.voicestream.channel.ChannelMemberView
 import ru.voicestream.channel.ChannelMessageView
 import ru.voicestream.channel.MyChannelDirectory
 import ru.voicestream.channel.RoleView
@@ -42,6 +43,14 @@ class ChannelGraphQLResource(
         return channelCatalogService.myChannelDirectory(userId)
     }
 
+    @Query("channelMembers")
+    @Description("Returns active members of a channel visible to the current caller.")
+    fun channelMembers(@Name("channelId") channelId: UUID): List<ChannelMemberView> =
+        channelCatalogService.channelMembers(
+            channelId = channelId,
+            currentUserId = authContext.requireUserId(),
+        )
+
     @Query("channelRoles")
     @Description("Returns role basics for a channel visible to the current caller.")
     fun channelRoles(@Name("channelId") channelId: UUID): List<RoleView> {
@@ -73,6 +82,42 @@ class ChannelGraphQLResource(
             channelId = input.channelId,
             authorUserId = authContext.requireUserId(),
             body = input.body,
+        )
+
+    @Mutation("addChannelMember")
+    @Description("Adds or reactivates a user in a channel and assigns the system USER role.")
+    fun addChannelMember(
+        @Name("channelId") channelId: UUID,
+        @Name("userId") userId: UUID,
+    ): ChannelMemberView =
+        channelCatalogService.addChannelMember(
+            channelId = channelId,
+            userId = userId,
+            currentUserId = authContext.requireUserId(),
+        )
+
+    @Mutation("removeChannelMember")
+    @Description("Marks a channel member as left and clears assigned roles.")
+    fun removeChannelMember(
+        @Name("channelId") channelId: UUID,
+        @Name("userId") userId: UUID,
+    ): Boolean =
+        channelCatalogService.removeChannelMember(
+            channelId = channelId,
+            userId = userId,
+            currentUserId = authContext.requireUserId(),
+        )
+
+    @Mutation("assignChannelRole")
+    @Description("Assigns a role to an active channel member.")
+    fun assignChannelRole(
+        @Name("channelMemberId") channelMemberId: UUID,
+        @Name("roleId") roleId: UUID,
+    ): ChannelMemberView =
+        channelCatalogService.assignChannelRole(
+            channelMemberId = channelMemberId,
+            roleId = roleId,
+            currentUserId = authContext.requireUserId(),
         )
 
     @Mutation("startMediaSession")
