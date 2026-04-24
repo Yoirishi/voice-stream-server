@@ -7,6 +7,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Kotlin source lives under `src/main/kotlin`.
 - Java generator examples were removed.
 - The database is PostgreSQL 18.3 from `compose.yaml`.
+- Docker Compose now starts `postgres`, `livekit`, and `app`.
 - Quarkus connects to `jdbc:postgresql://localhost:5432/voice_stream` by default.
 - Flyway owns schema changes. Put migrations in `src/main/resources/db/migration`.
 - Hibernate ORM is present and entities mirror `V1__initial_schema.sql`, but do not use `import.sql` or Hibernate schema generation for core schema work.
@@ -21,7 +22,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - GraphQL `myChannels` is the frontend channel tree. It starts from `channel_members`, requires effective `channel.view`, hides private channels without access, and returns the caller's primary role plus computed channel permissions.
 - GraphQL `channelMembers(channelId)` returns active members plus their expanded role list. `addChannelMember` auto-assigns the system `USER` role, `removeChannelMember` marks `left_at` and clears role assignments, and `assignChannelRole` appends roles idempotently.
 - GraphQL `channelRoles(channelId)` now returns each role with sparse explicit permission rules. `createChannelRole`/`updateChannelRole`/`deleteChannelRole` work only for `CUSTOM` roles, and `setRolePermission` upserts or clears explicit permission rows.
-- Media is not handled by Quarkus directly. Quarkus issues media join tickets and relays app-level signaling; an external WebRTC SFU should move audio/video/screen packets.
+- Media is not handled by Quarkus directly. Quarkus issues media join tickets; LiveKit runs as the default SFU in Docker Compose and moves audio/screen packets.
 - Unit tests use JUnit 5 and Mockito-Kotlin. Integration tests can use QuarkusTest, RestAssured, and JDK WebSocket clients.
 - Browser media e2e scaffolding lives in `e2e/media` and runs through `compose.e2e.yaml`; it currently validates fake camera/mic WebRTC flow before an SFU is selected.
 
@@ -49,9 +50,11 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Event WS currently emits `channelMessageCreated`, `directMessageCreated`, `contactRequestReceived`, `mediaSessionStarted`, and `mediaSessionEnded`.
 - Event WS authenticates with the bearer access token in the query string because browser WebSocket clients cannot reliably set `Authorization` headers.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.
+- `startMediaSession` / `joinMediaSession` now return dual media credentials: preferred `serverUrl` + `participantToken` for LiveKit, and legacy `signalingUrl` + `token` for the internal signaling relay.
 - `leaveMediaSession(mediaSessionId)` marks the caller's active participant row as left; if that was the last active participant, the session transitions to `ENDED`.
 - `endMediaSession(mediaSessionId)` is allowed for the session creator or the channel owner, marks active participants as left, emits `mediaSessionEnded`, and closes signaling sockets for that session.
-- Signaling uses `ws://.../ws/signaling/{mediaSessionId}?token={mediaToken}` and currently relays JSON messages to other peers in the same media session.
+- LiveKit local config lives in `ops/livekit/local.yaml`. It is intentionally localhost-only (`node_ip: 127.0.0.1`) and not production-safe.
+- Signaling uses `ws://.../ws/signaling/{mediaSessionId}?token={mediaToken}` and currently relays JSON messages to other peers in the same media session as a legacy path.
 - When a session ends, active signaling peers for that session are closed with reason `Media session has ended.`.
 - Direct per-user access overrides and sensitive-field filtering are planned but not implemented yet.
 

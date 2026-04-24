@@ -1,5 +1,7 @@
-*
-!build/*-runner
-!build/*-runner.jar
-!build/lib/*
-!build/quarkus-app/*
+.git
+.gradle
+.gradle-user-home
+.kotlin
+build
+e2e/media/node_modules
+e2e/media/test-results

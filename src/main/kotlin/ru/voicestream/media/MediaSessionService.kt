@@ -1,6 +1,7 @@
 package ru.voicestream.media
 
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.json.Json
 import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
 import org.eclipse.microprofile.config.inject.ConfigProperty
@@ -22,6 +23,7 @@ import java.util.UUID
 class MediaSessionService(
     private val entityManager: EntityManager,
     private val mediaTokenService: MediaTokenService,
+    private val liveKitTokenService: LiveKitTokenService,
     private val channelCatalogService: ChannelCatalogService,
     private val eventHub: EventHub,
     private val signalingHub: SignalingHub,
@@ -38,9 +40,7 @@ class MediaSessionService(
     @Transactional
     fun startSession(input: StartMediaSessionRequest): MediaJoinTicket {
         val channel = requireVoiceChannel(input.channelId)
-        require(entityManager.find(UserEntity::class.java, input.userId) != null) {
-            "User ${input.userId} was not found."
-        }
+        val user = requireActiveUser(input.userId)
 
         val existingSession = activeSession(channel, input.type)
         val session = existingSession ?: createSession(channel, input)
@@ -60,7 +60,13 @@ class MediaSessionService(
             )
         }
 
-        return issueTicket(session, input.userId, input.canPublishAudio, input.canPublishScreen, canSubscribe = true)
+        return issueTicket(
+            session = session,
+            user = user,
+            canPublishAudio = input.canPublishAudio,
+            canPublishScreen = input.canPublishScreen,
+            canSubscribe = true,
+        )
     }
 
     @Transactional
@@ -69,9 +75,7 @@ class MediaSessionService(
             "Media session ${input.mediaSessionId} was not found."
         }
         require(session.status == MediaSessionStatus.ACTIVE) { "Media session ${input.mediaSessionId} is not active." }
-        require(entityManager.find(UserEntity::class.java, input.userId) != null) {
-            "User ${input.userId} was not found."
-        }
+        val user = requireActiveUser(input.userId)
 
         joinParticipant(
             mediaSessionId = requireNotNull(session.id),
@@ -81,7 +85,13 @@ class MediaSessionService(
             canSubscribe = input.canSubscribe,
         )
 
-        return issueTicket(session, input.userId, input.canPublishAudio, input.canPublishScreen, input.canSubscribe)
+        return issueTicket(
+            session = session,
+            user = user,
+            canPublishAudio = input.canPublishAudio,
+            canPublishScreen = input.canPublishScreen,
+            canSubscribe = input.canSubscribe,
+        )
     }
 
     @Transactional
@@ -193,6 +203,14 @@ class MediaSessionService(
             .resultList
             .isNotEmpty()
 
+    private fun requireActiveUser(userId: UUID): UserEntity {
+        val user = requireNotNull(entityManager.find(UserEntity::class.java, userId)) {
+            "User $userId was not found."
+        }
+        require(user.disabledAt == null) { "User $userId is disabled." }
+        return user
+    }
+
     private fun createSession(channel: ChannelEntity, input: StartMediaSessionRequest): MediaSessionEntity {
         val now = OffsetDateTime.now()
         val sessionId = UUID.randomUUID()
@@ -280,18 +298,33 @@ class MediaSessionService(
 
     private fun issueTicket(
         session: MediaSessionEntity,
-        userId: UUID,
+        user: UserEntity,
         canPublishAudio: Boolean,
         canPublishScreen: Boolean,
         canSubscribe: Boolean,
     ): MediaJoinTicket {
         val mediaSessionId = requireNotNull(session.id)
         val channelId = requireNotNull(session.channelId)
-        val issuedToken = mediaTokenService.issue(
+        val legacyToken = mediaTokenService.issue(
             MediaTokenInput(
                 mediaSessionId = mediaSessionId,
                 channelId = channelId,
-                userId = userId,
+                userId = requireNotNull(user.id),
+                canPublishAudio = canPublishAudio,
+                canPublishScreen = canPublishScreen,
+                canSubscribe = canSubscribe,
+            ),
+        )
+        val participantToken = liveKitTokenService.issue(
+            LiveKitTokenInput(
+                identity = requireNotNull(user.id).toString(),
+                name = user.displayName,
+                roomName = session.sfuRoomName,
+                metadata = Json.createObjectBuilder()
+                    .add("mediaSessionId", mediaSessionId.toString())
+                    .add("channelId", channelId.toString())
+                    .add("mediaSessionType", session.type.name)
+                    .build(),
                 canPublishAudio = canPublishAudio,
                 canPublishScreen = canPublishScreen,
                 canSubscribe = canSubscribe,
@@ -301,13 +334,15 @@ class MediaSessionService(
         return MediaJoinTicket(
             mediaSessionId = mediaSessionId,
             channelId = channelId,
-            userId = userId,
+            userId = requireNotNull(user.id),
             sfuProvider = session.sfuProvider,
-            sfuUrl = sfuUrl,
-            signalingUrl = "$signalingUrl/$mediaSessionId?token=${issuedToken.token}",
+            sfuUrl = participantToken.serverUrl,
+            signalingUrl = "$signalingUrl/$mediaSessionId?token=${legacyToken.token}",
             roomName = session.sfuRoomName,
-            token = issuedToken.token,
-            expiresAt = issuedToken.expiresAt,
+            token = legacyToken.token,
+            participantToken = participantToken.token,
+            serverUrl = participantToken.serverUrl,
+            expiresAt = participantToken.expiresAt,
             canPublishAudio = canPublishAudio,
             canPublishScreen = canPublishScreen,
             canSubscribe = canSubscribe,
@@ -351,6 +386,8 @@ data class MediaJoinTicket(
     val signalingUrl: String,
     val roomName: String,
     val token: String,
+    val participantToken: String,
+    val serverUrl: String,
     val expiresAt: OffsetDateTime,
     val canPublishAudio: Boolean,
     val canPublishScreen: Boolean,

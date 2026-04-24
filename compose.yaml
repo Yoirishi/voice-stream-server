@@ -16,5 +16,39 @@ services:
       timeout: 5s
       retries: 10
 
+  livekit:
+    image: livekit/livekit-server:v1.11.0
+    container_name: voice-stream-livekit
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./ops/livekit/local.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "50000-50020:50000-50020/udp"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voice-stream-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    environment:
+      DB_JDBC_URL: jdbc:postgresql://postgres:5432/voice_stream
+      DB_USERNAME: voice_stream
+      DB_PASSWORD: voice_stream
+      MEDIA_SFU_PROVIDER: livekit
+      MEDIA_SFU_URL: ws://localhost:7880
+      MEDIA_SIGNALING_URL: ws://localhost:8080/ws/signaling
+      MEDIA_LIVEKIT_SERVER_URL: ws://localhost:7880
+      MEDIA_LIVEKIT_API_KEY: devkey
+      MEDIA_LIVEKIT_API_SECRET: secret
+    ports:
+      - "8080:8080"
+
 volumes:
   voice_stream_postgres_data:

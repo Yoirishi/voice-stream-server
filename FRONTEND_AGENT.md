@@ -1111,6 +1111,8 @@ mutation StartMediaSession {
     signalingUrl
     roomName
     token
+    participantToken
+    serverUrl
     expiresAt
     canPublishAudio
     canPublishScreen
@@ -1131,8 +1133,9 @@ Nuances:
 - Channel must be a `VOICE` channel.
 - User must exist.
 - If an active session already exists for the channel and media type, backend reuses it.
-- The returned `signalingUrl` already includes `mediaSessionId` and `token`; the frontend can connect to it directly.
-- The returned `token` is also the media token; keep it private.
+- Preferred LiveKit fields are `serverUrl` and `participantToken`.
+- `signalingUrl` and `token` are legacy compatibility fields for the internal signaling relay.
+- For new frontend work, connect the LiveKit SDK with `serverUrl` + `participantToken`.
 
 ### Mutation `joinMediaSession(input)`
 
@@ -1156,6 +1159,8 @@ mutation JoinMediaSession {
     signalingUrl
     roomName
     token
+    participantToken
+    serverUrl
     expiresAt
     canPublishAudio
     canPublishScreen
@@ -1235,6 +1240,8 @@ type MediaJoinTicket = {
   signalingUrl: string;
   roomName: string;
   token: string;
+  participantToken: string;
+  serverUrl: string;
   expiresAt: string;
   canPublishAudio: boolean;
   canPublishScreen: boolean;
@@ -1242,7 +1249,12 @@ type MediaJoinTicket = {
 };
 ```
 
-## Signaling WebSocket
+Preferred usage:
+
+- `serverUrl` + `participantToken`: LiveKit SDK path for real media.
+- `signalingUrl` + `token`: legacy internal signaling relay, kept for compatibility and tests.
+
+## Legacy Signaling WebSocket
 
 Connect to:
 
@@ -1250,7 +1262,7 @@ Connect to:
 ws://localhost:8080/ws/signaling/{mediaSessionId}?token={mediaToken}
 ```
 
-Use the `signalingUrl` returned by `startMediaSession` / `joinMediaSession` when possible.
+Use the `signalingUrl` returned by `startMediaSession` / `joinMediaSession` only for the legacy signaling path.
 
 Invalid connection behavior:
 
@@ -1311,15 +1323,15 @@ Current recommendation:
 
 - Use WebRTC for audio/video/screen.
 - Backend handles auth/session/tickets/control signaling.
-- An external SFU should carry RTP media traffic.
-- The current backend signaling WebSocket is app-level signaling relay, not a media relay.
+- LiveKit is the default SFU for local Docker Compose and should carry RTP media traffic.
+- The current backend signaling WebSocket is a legacy app-level relay, not the primary media path.
 
 Browser/Tauri frontend notes:
 
 - Use `navigator.mediaDevices.getUserMedia()` for microphone.
 - Use `navigator.mediaDevices.getDisplayMedia()` for screen/window capture.
-- Use the SFU SDK once the SFU is selected.
-- Use `MediaJoinTicket.sfuUrl`, `roomName`, `token`, and capability flags to join/publish/subscribe.
+- Use the LiveKit React/JS SDK.
+- Use `MediaJoinTicket.serverUrl`, `roomName`, `participantToken`, and capability flags to join/publish/subscribe.
 - Keep media tokens short-lived and never log them.
 
 Testing notes:

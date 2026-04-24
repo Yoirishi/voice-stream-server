@@ -10,15 +10,22 @@ Backend for a Discord-like voice, screen sharing, and text chat service.
 - Quarkus REST Jackson
 - SmallRye GraphQL
 - WebSocket signaling
+- LiveKit SFU
 - PostgreSQL 18.3
 - Flyway
 
 ## Local Run
 
-Start the database:
+Run everything in Docker:
 
 ```shell
-docker compose up -d postgres
+docker compose up --build
+```
+
+Or, for backend dev mode, start infra only:
+
+```shell
+docker compose up -d postgres livekit
 ```
 
 Run Quarkus in dev mode:
@@ -38,6 +45,7 @@ Useful local URLs:
 - Logout: `POST http://localhost:8080/api/auth/logout`
 - Events WebSocket: `ws://localhost:8080/ws/events?token=<accessToken>`
 - Signaling WebSocket: `ws://localhost:8080/ws/signaling/{mediaSessionId}?token={mediaToken}`
+- LiveKit WS URL: `ws://localhost:7880`
 
 Frontend/API agent notes live in `FRONTEND_AGENT.md`.
 
@@ -46,8 +54,9 @@ Flyway migrations live in `src/main/resources/db/migration`. Hibernate entities 
 The MVP media flow is split this way:
 
 - GraphQL stores and returns channel data, messages, roles, active media sessions, and media join tickets.
-- The WebSocket endpoint relays app-level signaling events between participants in the same media session.
-- Voice and screen media should go through an external WebRTC SFU. Configure it with `MEDIA_SFU_PROVIDER`, `MEDIA_SFU_URL`, `MEDIA_SIGNALING_URL`, `MEDIA_TOKEN_SECRET`, and `MEDIA_TOKEN_TTL_SECONDS`.
+- LiveKit runs as a separate SFU service in `compose.yaml` and handles actual voice/screen WebRTC transport.
+- The custom WebSocket signaling endpoint remains available as a legacy relay path and for tests.
+- `startMediaSession` / `joinMediaSession` now return LiveKit room credentials (`serverUrl`, `participantToken`) plus legacy signaling fields (`signalingUrl`, `token`) for compatibility.
 
 Auth endpoints:
 
