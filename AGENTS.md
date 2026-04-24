@@ -16,6 +16,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - GraphQL `me` returns the current safe `AuthUserView` from the bearer token and database user row.
 - GraphQL `myChannels` is the frontend channel tree. It starts from `channel_members`, requires effective `channel.view`, hides private channels without access, and returns the caller's primary role plus computed channel permissions.
 - GraphQL `channelMembers(channelId)` returns active members plus their expanded role list. `addChannelMember` auto-assigns the system `USER` role, `removeChannelMember` marks `left_at` and clears role assignments, and `assignChannelRole` appends roles idempotently.
+- GraphQL `channelRoles(channelId)` now returns each role with sparse explicit permission rules. `createChannelRole`/`updateChannelRole`/`deleteChannelRole` work only for `CUSTOM` roles, and `setRolePermission` upserts or clears explicit permission rows.
 - Media is not handled by Quarkus directly. Quarkus issues media join tickets and relays app-level signaling; an external WebRTC SFU should move audio/video/screen packets.
 - Unit tests use JUnit 5 and Mockito-Kotlin. Integration tests can use QuarkusTest, RestAssured, and JDK WebSocket clients.
 - Browser media e2e scaffolding lives in `e2e/media` and runs through `compose.e2e.yaml`; it currently validates fake camera/mic WebRTC flow before an SFU is selected.
@@ -31,6 +32,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - `POST /api/auth/logout` revokes the matching session when the cookie is valid and always clears `voice_stream_session` with `Max-Age=0`.
 - Effective channel permissions currently use assigned channel roles; `DENY` beats `ALLOW`, and `OWNER` is treated as all permissions allowed.
 - Member-management mutations currently enforce `member.manage`, role assignment enforces `role.manage`, and the channel owner gets full access even if the owner row is not present in `channel_members`.
+- Supported permission keys for MVP are `channel.view`, `message.read`, `message.send`, `voice.connect`, `voice.speak`, `screen.share`, `channel.manage`, `role.manage`, and `member.manage`.
 - Roles are scoped directly to a channel. `OWNER` and `USER` are system role kinds; custom channel roles use `CUSTOM`.
 - Channel access is modeled through channel-scoped roles and `role_permissions`.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.

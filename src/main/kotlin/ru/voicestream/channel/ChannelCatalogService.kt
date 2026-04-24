@@ -193,15 +193,133 @@ class ChannelCatalogService(
         return memberView(channelMemberId)
     }
 
-    fun roles(channelId: UUID): List<RoleView> =
-        entityManager
+    fun channelRoles(channelId: UUID, currentUserId: UUID): List<RoleView> {
+        requireChannelPermission(channelId, currentUserId, "view channel roles") { it.canView }
+        return roleViews(rolesForChannel(channelId))
+    }
+
+    @Transactional
+    fun createChannelRole(
+        channelId: UUID,
+        name: String,
+        colorHex: String?,
+        position: Int,
+        currentUserId: UUID,
+    ): RoleView {
+        requireChannelPermission(channelId, currentUserId, "create channel roles") { it.canManageRoles }
+
+        val normalizedName = normalizeRoleName(name)
+        validateRoleColor(colorHex)
+        validateRolePosition(position)
+        require(roleByName(channelId, normalizedName) == null) {
+            "Role name '$normalizedName' is already used in channel $channelId."
+        }
+
+        val now = OffsetDateTime.now()
+        val role = RoleEntity().apply {
+            id = UUID.randomUUID()
+            this.channelId = channelId
+            this.name = normalizedName
+            kind = RoleKind.CUSTOM
+            system = false
+            this.colorHex = colorHex
+            this.position = position
+            createdAt = now
+            updatedAt = now
+        }
+        entityManager.persist(role)
+        return role.toView()
+    }
+
+    @Transactional
+    fun updateChannelRole(
+        roleId: UUID,
+        name: String,
+        colorHex: String?,
+        position: Int,
+        currentUserId: UUID,
+    ): RoleView {
+        val role = requireNotNull(entityManager.find(RoleEntity::class.java, roleId)) {
+            "Role $roleId was not found."
+        }
+        require(!role.system) { "System roles cannot be updated." }
+        requireChannelPermission(requireNotNull(role.channelId), currentUserId, "update channel roles") { it.canManageRoles }
+
+        val normalizedName = normalizeRoleName(name)
+        validateRoleColor(colorHex)
+        validateRolePosition(position)
+        val existingRole = roleByName(requireNotNull(role.channelId), normalizedName)
+        require(existingRole == null || existingRole.id == roleId) {
+            "Role name '$normalizedName' is already used in channel ${role.channelId}."
+        }
+
+        role.name = normalizedName
+        role.colorHex = colorHex
+        role.position = position
+        role.updatedAt = OffsetDateTime.now()
+        return role.toView(rolePermissionsByRoleId(setOf(roleId)))
+    }
+
+    @Transactional
+    fun deleteChannelRole(roleId: UUID, currentUserId: UUID): Boolean {
+        val role = entityManager.find(RoleEntity::class.java, roleId) ?: return false
+        require(!role.system) { "System roles cannot be deleted." }
+        requireChannelPermission(requireNotNull(role.channelId), currentUserId, "delete channel roles") { it.canManageRoles }
+        entityManager.remove(role)
+        return true
+    }
+
+    @Transactional
+    fun setRolePermission(
+        roleId: UUID,
+        permissionKey: String,
+        effect: PermissionEffect?,
+        currentUserId: UUID,
+    ): RoleView {
+        val normalizedPermissionKey = permissionKey.trim()
+        require(normalizedPermissionKey in SUPPORTED_PERMISSION_KEYS_SET) {
+            "Permission '$normalizedPermissionKey' is not supported."
+        }
+
+        val role = requireNotNull(entityManager.find(RoleEntity::class.java, roleId)) {
+            "Role $roleId was not found."
+        }
+        val channelId = requireNotNull(role.channelId)
+        requireChannelPermission(channelId, currentUserId, "set role permissions") { it.canManageRoles }
+
+        val existingPermission = entityManager
             .createQuery(
-                "select r from RoleEntity r where r.channelId = :channelId order by r.position asc, r.name asc",
-                RoleEntity::class.java,
+                """
+                select p from RolePermissionEntity p
+                where p.roleId = :roleId
+                and p.permissionKey = :permissionKey
+                """.trimIndent(),
+                RolePermissionEntity::class.java,
             )
-            .setParameter("channelId", channelId)
+            .setParameter("roleId", roleId)
+            .setParameter("permissionKey", normalizedPermissionKey)
             .resultList
-            .map { it.toView() }
+            .firstOrNull()
+
+        if (effect == null) {
+            existingPermission?.let(entityManager::remove)
+        } else if (existingPermission == null) {
+            entityManager.persist(
+                RolePermissionEntity().apply {
+                    this.channelId = channelId
+                    this.roleId = roleId
+                    this.permissionKey = normalizedPermissionKey
+                    this.effect = effect
+                    createdAt = OffsetDateTime.now()
+                },
+            )
+        } else {
+            existingPermission.effect = effect
+        }
+
+        role.updatedAt = OffsetDateTime.now()
+        return role.toView(rolePermissionsByRoleId(setOf(roleId)))
+    }
 
     fun messages(channelId: UUID, limit: Int): List<ChannelMessageView> =
         entityManager
@@ -286,6 +404,12 @@ class ChannelCatalogService(
             usersById(members.map { requireNotNull(it.userId) })
         }
         val rolesByMemberId = rolesByMemberId(memberIds)
+        val rolePermissionsByRoleId = rolePermissionsByRoleId(
+            rolesByMemberId.values
+                .flatten()
+                .map { requireNotNull(it.id) }
+                .toSet(),
+        )
 
         return members.map { member ->
             val memberId = requireNotNull(member.id)
@@ -298,7 +422,7 @@ class ChannelCatalogService(
                 }.toAuthView(),
                 displayName = member.displayName,
                 joinedAt = member.joinedAt,
-                roles = rolesByMemberId[memberId].orEmpty().map { it.toView() },
+                roles = rolesByMemberId[memberId].orEmpty().map { it.toView(rolePermissionsByRoleId) },
             )
         }
     }
@@ -374,6 +498,30 @@ class ChannelCatalogService(
         return user
     }
 
+    private fun rolesForChannel(channelId: UUID): List<RoleEntity> =
+        entityManager
+            .createQuery(
+                "select r from RoleEntity r where r.channelId = :channelId order by r.position asc, r.name asc",
+                RoleEntity::class.java,
+            )
+            .setParameter("channelId", channelId)
+            .resultList
+
+    private fun roleByName(channelId: UUID, name: String): RoleEntity? =
+        entityManager
+            .createQuery(
+                """
+                select r from RoleEntity r
+                where r.channelId = :channelId
+                and lower(r.name) = lower(:name)
+                """.trimIndent(),
+                RoleEntity::class.java,
+            )
+            .setParameter("channelId", channelId)
+            .setParameter("name", name)
+            .resultList
+            .firstOrNull()
+
     private fun channels(channelIds: Collection<UUID>): List<ChannelEntity> {
         if (channelIds.isEmpty()) {
             return emptyList()
@@ -446,6 +594,15 @@ class ChannelCatalogService(
             }
     }
 
+    private fun roleViews(roles: List<RoleEntity>): List<RoleView> {
+        if (roles.isEmpty()) {
+            return emptyList()
+        }
+
+        val rolePermissionsByRoleId = rolePermissionsByRoleId(roles.map { requireNotNull(it.id) }.toSet())
+        return roles.map { it.toView(rolePermissionsByRoleId) }
+    }
+
     private fun permissionsByRoleId(roleIds: Collection<UUID>): Map<UUID, List<RolePermissionEntity>> {
         if (roleIds.isEmpty()) {
             return emptyMap()
@@ -462,6 +619,26 @@ class ChannelCatalogService(
             )
             .setParameter("roleIds", roleIds)
             .setParameter("permissionKeys", CLIENT_PERMISSION_KEYS)
+            .resultList
+            .groupBy { requireNotNull(it.roleId) }
+    }
+
+    private fun rolePermissionsByRoleId(roleIds: Collection<UUID>): Map<UUID, List<RolePermissionEntity>> {
+        if (roleIds.isEmpty()) {
+            return emptyMap()
+        }
+
+        return entityManager
+            .createQuery(
+                """
+                select p from RolePermissionEntity p
+                where p.roleId in :roleIds
+                and p.permissionKey in :permissionKeys
+                """.trimIndent(),
+                RolePermissionEntity::class.java,
+            )
+            .setParameter("roleIds", roleIds)
+            .setParameter("permissionKeys", SUPPORTED_PERMISSION_KEYS)
             .resultList
             .groupBy { requireNotNull(it.roleId) }
     }
@@ -593,7 +770,9 @@ class ChannelCatalogService(
             permissions = permissions,
         )
 
-    private fun RoleEntity.toView(): RoleView =
+    private fun RoleEntity.toView(
+        rolePermissionsByRoleId: Map<UUID, List<RolePermissionEntity>> = emptyMap(),
+    ): RoleView =
         RoleView(
             id = requireNotNull(id),
             channelId = requireNotNull(channelId),
@@ -602,6 +781,10 @@ class ChannelCatalogService(
             colorHex = colorHex,
             position = position,
             system = system,
+            permissions = rolePermissionsByRoleId[requireNotNull(id)]
+                .orEmpty()
+                .sortedBy { permissionOrder(requireNotNull(it.permissionKey)) }
+                .map { it.toView() },
         )
 
     private fun ChannelMessageEntity.toView(): ChannelMessageView =
@@ -674,6 +857,31 @@ class ChannelCatalogService(
             avatarMediaKey = avatarMediaKey,
         )
 
+    private fun RolePermissionEntity.toView(): RolePermissionView =
+        RolePermissionView(
+            permissionKey = requireNotNull(permissionKey),
+            effect = effect,
+        )
+
+    private fun normalizeRoleName(name: String): String =
+        name.trim().also {
+            require(it.isNotBlank()) { "Role name must not be blank." }
+            require(it.length <= 80) { "Role name is too long." }
+        }
+
+    private fun validateRoleColor(colorHex: String?) {
+        require(colorHex == null || ROLE_COLOR_PATTERN.matches(colorHex)) {
+            "Role color must match #RRGGBB."
+        }
+    }
+
+    private fun validateRolePosition(position: Int) {
+        require(position >= 0) { "Role position must be non-negative." }
+    }
+
+    private fun permissionOrder(permissionKey: String): Int =
+        SUPPORTED_PERMISSION_KEYS.indexOf(permissionKey).takeIf { it >= 0 } ?: Int.MAX_VALUE
+
     private data class ChannelActorAccess(
         val channel: ChannelEntity,
         val permissions: EffectiveChannelPermissions,
@@ -706,10 +914,27 @@ class ChannelCatalogService(
         private const val PERMISSION_CHANNEL_MANAGE = "channel.manage"
         private const val PERMISSION_CHANNEL_VIEW = "channel.view"
         private const val PERMISSION_MEMBER_MANAGE = "member.manage"
+        private const val PERMISSION_MESSAGE_READ = "message.read"
         private const val PERMISSION_MESSAGE_SEND = "message.send"
         private const val PERMISSION_ROLE_MANAGE = "role.manage"
         private const val PERMISSION_VOICE_CONNECT = "voice.connect"
+        private const val PERMISSION_VOICE_SPEAK = "voice.speak"
         private const val PERMISSION_SCREEN_SHARE = "screen.share"
+
+        private val ROLE_COLOR_PATTERN = Regex("^#[0-9A-Fa-f]{6}$")
+
+        private val SUPPORTED_PERMISSION_KEYS = listOf(
+            PERMISSION_CHANNEL_VIEW,
+            PERMISSION_MESSAGE_READ,
+            PERMISSION_MESSAGE_SEND,
+            PERMISSION_VOICE_CONNECT,
+            PERMISSION_VOICE_SPEAK,
+            PERMISSION_SCREEN_SHARE,
+            PERMISSION_CHANNEL_MANAGE,
+            PERMISSION_ROLE_MANAGE,
+            PERMISSION_MEMBER_MANAGE,
+        )
+        private val SUPPORTED_PERMISSION_KEYS_SET = SUPPORTED_PERMISSION_KEYS.toSet()
 
         private val CLIENT_PERMISSION_KEYS = setOf(
             PERMISSION_CHANNEL_MANAGE,
@@ -798,6 +1023,12 @@ data class RoleView(
     val colorHex: String?,
     val position: Int,
     val system: Boolean,
+    val permissions: List<RolePermissionView>,
+)
+
+data class RolePermissionView(
+    val permissionKey: String,
+    val effect: PermissionEffect,
 )
 
 data class ChannelMessageView(

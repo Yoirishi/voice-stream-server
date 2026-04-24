@@ -398,6 +398,10 @@ query ChannelRoles($channelId: UUID!) {
     colorHex
     position
     system
+    permissions {
+      permissionKey
+      effect
+    }
   }
 }
 ```
@@ -413,6 +417,21 @@ type RoleView = {
   colorHex: string | null;
   position: number;
   system: boolean;
+  permissions: RolePermissionView[];
+};
+
+type RolePermissionView = {
+  permissionKey:
+    | 'channel.view'
+    | 'message.read'
+    | 'message.send'
+    | 'voice.connect'
+    | 'voice.speak'
+    | 'screen.share'
+    | 'channel.manage'
+    | 'role.manage'
+    | 'member.manage';
+  effect: 'ALLOW' | 'DENY';
 };
 ```
 
@@ -420,7 +439,122 @@ Nuances:
 
 - Roles are scoped directly to channels.
 - `OWNER` and `USER` are system roles.
-- `CUSTOM` roles are planned for user-created roles, but only assignment exists yet; create/update/delete mutations do not exist yet.
+- Permission rows are sparse. Missing permission entry means neutral/no explicit rule.
+- Roles are ordered by `position`, then `name`.
+
+### Mutation `createChannelRole(input)`
+
+Creates a custom role in a channel.
+
+Rules:
+
+- Requires effective `role.manage`.
+- Creates only `CUSTOM` roles.
+- Role names are unique per channel, case-insensitively.
+- `colorHex` must match `#RRGGBB` when present.
+- `position` must be non-negative.
+
+Example:
+
+```graphql
+mutation CreateChannelRole($channelId: UUID!) {
+  createChannelRole(
+    input: {
+      channelId: $channelId
+      name: "Officer"
+      colorHex: "#445566"
+      position: 25
+    }
+  ) {
+    id
+    name
+    kind
+    colorHex
+    position
+    system
+    permissions {
+      permissionKey
+      effect
+    }
+  }
+}
+```
+
+### Mutation `updateChannelRole(input)`
+
+Updates a custom role.
+
+Rules:
+
+- Requires effective `role.manage`.
+- System roles cannot be updated.
+- `colorHex: null` clears the color.
+
+Example:
+
+```graphql
+mutation UpdateChannelRole($roleId: UUID!) {
+  updateChannelRole(
+    input: {
+      roleId: $roleId
+      name: "Officer+"
+      colorHex: "#112233"
+      position: 30
+    }
+  ) {
+    id
+    name
+    colorHex
+    position
+    permissions {
+      permissionKey
+      effect
+    }
+  }
+}
+```
+
+### Mutation `deleteChannelRole(roleId)`
+
+Deletes a custom role.
+
+Rules:
+
+- Requires effective `role.manage`.
+- System roles cannot be deleted.
+- Returns `true` when the role existed and was deleted, `false` when the role id was already missing.
+
+### Mutation `setRolePermission(input)`
+
+Upserts or clears a role permission.
+
+Rules:
+
+- Requires effective `role.manage`.
+- Supports only these permission keys:
+  `channel.view`, `message.read`, `message.send`, `voice.connect`, `voice.speak`, `screen.share`, `channel.manage`, `role.manage`, `member.manage`
+- `effect: ALLOW` or `DENY` creates/updates the explicit rule.
+- Omitting `effect` or sending `null` removes the explicit rule.
+
+Example:
+
+```graphql
+mutation SetRolePermission($roleId: UUID!) {
+  setRolePermission(
+    input: {
+      roleId: $roleId
+      permissionKey: "message.read"
+      effect: ALLOW
+    }
+  ) {
+    id
+    permissions {
+      permissionKey
+      effect
+    }
+  }
+}
+```
 
 ### Query `channelMembers(channelId)`
 
@@ -859,8 +993,6 @@ Do not invent these endpoints yet; they are not implemented:
 
 - channel create/update/delete/reorder
 - channel invites
-- role create/update/delete
-- permission editing
 - realtime text message subscriptions
 - media session end/leave endpoint
 - file/media upload endpoint

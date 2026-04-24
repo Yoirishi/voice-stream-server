@@ -54,8 +54,10 @@ class ChannelGraphQLResource(
     @Query("channelRoles")
     @Description("Returns role basics for a channel visible to the current caller.")
     fun channelRoles(@Name("channelId") channelId: UUID): List<RoleView> {
-        authContext.requireUserId()
-        return channelCatalogService.roles(channelId)
+        return channelCatalogService.channelRoles(
+            channelId = channelId,
+            currentUserId = authContext.requireUserId(),
+        )
     }
 
     @Query("channelMessages")
@@ -120,6 +122,46 @@ class ChannelGraphQLResource(
             currentUserId = authContext.requireUserId(),
         )
 
+    @Mutation("createChannelRole")
+    @Description("Creates a custom role in a channel.")
+    fun createChannelRole(input: CreateChannelRoleInput): RoleView =
+        channelCatalogService.createChannelRole(
+            channelId = input.channelId,
+            name = input.name,
+            colorHex = input.colorHex?.trim()?.ifEmpty { null },
+            position = input.position,
+            currentUserId = authContext.requireUserId(),
+        )
+
+    @Mutation("updateChannelRole")
+    @Description("Updates a custom role.")
+    fun updateChannelRole(input: UpdateChannelRoleInput): RoleView =
+        channelCatalogService.updateChannelRole(
+            roleId = input.roleId,
+            name = input.name,
+            colorHex = input.colorHex?.trim()?.ifEmpty { null },
+            position = input.position,
+            currentUserId = authContext.requireUserId(),
+        )
+
+    @Mutation("deleteChannelRole")
+    @Description("Deletes a custom role.")
+    fun deleteChannelRole(@Name("roleId") roleId: UUID): Boolean =
+        channelCatalogService.deleteChannelRole(
+            roleId = roleId,
+            currentUserId = authContext.requireUserId(),
+        )
+
+    @Mutation("setRolePermission")
+    @Description("Upserts or clears a role permission. Pass null effect to remove the explicit rule.")
+    fun setRolePermission(input: SetRolePermissionInput): RoleView =
+        channelCatalogService.setRolePermission(
+            roleId = input.roleId,
+            permissionKey = input.permissionKey,
+            effect = input.effect,
+            currentUserId = authContext.requireUserId(),
+        )
+
     @Mutation("startMediaSession")
     @Description("Starts or reuses a media session and returns an SFU/signaling join ticket.")
     fun startMediaSession(input: StartMediaSessionInput): MediaJoinTicket =
@@ -151,6 +193,29 @@ class ChannelGraphQLResource(
 class SendChannelMessageInput {
     lateinit var channelId: UUID
     lateinit var body: String
+}
+
+@Input
+class CreateChannelRoleInput {
+    lateinit var channelId: UUID
+    lateinit var name: String
+    var colorHex: String? = null
+    var position: Int = 0
+}
+
+@Input
+class UpdateChannelRoleInput {
+    lateinit var roleId: UUID
+    lateinit var name: String
+    var colorHex: String? = null
+    var position: Int = 0
+}
+
+@Input
+class SetRolePermissionInput {
+    lateinit var roleId: UUID
+    lateinit var permissionKey: String
+    var effect: ru.voicestream.domain.PermissionEffect? = null
 }
 
 @Input
