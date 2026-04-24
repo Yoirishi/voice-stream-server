@@ -187,6 +187,22 @@ class ChannelGraphQLResource(
                 canSubscribe = input.canSubscribe,
             ),
         )
+
+    @Mutation("leaveMediaSession")
+    @Description("Marks the current caller as left from a media session. The last leave ends the session.")
+    fun leaveMediaSession(@Name("mediaSessionId") mediaSessionId: UUID): Boolean =
+        mediaSessionService.leaveSession(
+            mediaSessionId = mediaSessionId,
+            userId = authContext.requireUserId(),
+        )
+
+    @Mutation("endMediaSession")
+    @Description("Ends a media session, closes active signaling peers, and returns the ended session view.")
+    fun endMediaSession(@Name("mediaSessionId") mediaSessionId: UUID): MediaSessionView =
+        mediaSessionService.endSession(
+            mediaSessionId = mediaSessionId,
+            currentUserId = authContext.requireUserId(),
+        )
 }
 
 @Input

@@ -36,6 +36,7 @@ Useful local URLs:
 - Login: `POST http://localhost:8080/api/auth/login`
 - Refresh: `POST http://localhost:8080/api/auth/refresh`
 - Logout: `POST http://localhost:8080/api/auth/logout`
+- Events WebSocket: `ws://localhost:8080/ws/events?token=<accessToken>`
 - Signaling WebSocket: `ws://localhost:8080/ws/signaling/{mediaSessionId}?token={mediaToken}`
 
 Frontend/API agent notes live in `FRONTEND_AGENT.md`.
@@ -131,3 +132,5 @@ GraphQL operations require `Authorization: Bearer <accessToken>`.
 - `sendDirectMessage(input)`
 - `startMediaSession(input)`
 - `joinMediaSession(input)`
+- `leaveMediaSession(mediaSessionId)`
+- `endMediaSession(mediaSessionId)`

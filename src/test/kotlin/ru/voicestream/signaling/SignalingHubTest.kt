@@ -121,8 +121,31 @@ class SignalingHubTest {
         assertEquals("Invalid token.", reasonCaptor.firstValue.reasonPhrase)
     }
 
+    @Test
+    fun `closeMediaSession closes peers without broadcasting peerLeft`() {
+        val hub = SignalingHub()
+        val mediaSessionId = UUID.randomUUID()
+        val first = mockPeer("first")
+        val second = mockPeer("second")
+
+        hub.join(mediaSessionId, first.session)
+        hub.join(mediaSessionId, second.session)
+        first.clear()
+        second.clear()
+
+        hub.closeMediaSession(mediaSessionId, "Media session has ended.")
+
+        assertEquals(emptyList<String>(), first.sentTexts)
+        assertEquals(emptyList<String>(), second.sentTexts)
+        assertEquals("Media session has ended.", first.closeReasons.single().reasonPhrase)
+        assertEquals(CloseReason.CloseCodes.NORMAL_CLOSURE, first.closeReasons.single().closeCode)
+        assertEquals("Media session has ended.", second.closeReasons.single().reasonPhrase)
+        assertEquals(CloseReason.CloseCodes.NORMAL_CLOSURE, second.closeReasons.single().closeCode)
+    }
+
     private fun mockPeer(connectionId: String, isOpen: Boolean = true): MockPeer {
         val sentTexts = mutableListOf<String>()
+        val closeReasons = mutableListOf<CloseReason>()
         val asyncRemote = mock<RemoteEndpoint.Async>()
         whenever(asyncRemote.sendText(any<String>())).thenAnswer { invocation ->
             sentTexts += invocation.getArgument<String>(0)
@@ -133,8 +156,12 @@ class SignalingHubTest {
         whenever(session.id).thenReturn(connectionId)
         whenever(session.isOpen).thenReturn(isOpen)
         whenever(session.asyncRemote).thenReturn(asyncRemote)
+        whenever(session.close(any<CloseReason>())).thenAnswer { invocation ->
+            closeReasons += invocation.getArgument<CloseReason>(0)
+            Unit
+        }
 
-        return MockPeer(session, sentTexts)
+        return MockPeer(session, sentTexts, closeReasons)
     }
 
     private fun parse(message: String) =
@@ -143,6 +170,7 @@ class SignalingHubTest {
     private data class MockPeer(
         val session: Session,
         val sentTexts: MutableList<String>,
+        val closeReasons: MutableList<CloseReason>,
     ) {
         fun clear() {
             sentTexts.clear()

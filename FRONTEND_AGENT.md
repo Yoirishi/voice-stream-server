@@ -9,6 +9,7 @@ The backend is an MVP. Some security boundaries are deliberately not finished ye
 - REST auth base: `http://localhost:8080/api/auth`
 - GraphQL endpoint: `http://localhost:8080/graphql`
 - GraphQL UI in dev: `http://localhost:8080/q/graphql-ui/`
+- Events WebSocket: `ws://localhost:8080/ws/events?token=<accessToken>`
 - Signaling WebSocket shape: `ws://localhost:8080/ws/signaling/{mediaSessionId}?token={mediaToken}`
 
 Local backend startup:
@@ -346,6 +347,64 @@ Nuances:
 - There is no unblock mutation yet.
 
 Timestamps are ISO offset date-time strings.
+
+## Realtime Event WebSocket
+
+Connect to:
+
+```text
+ws://localhost:8080/ws/events?token=<accessToken>
+```
+
+Use the current bearer access token as the `token` query parameter.
+
+Connection notes:
+
+- Missing, bad, or expired token: close with reason `Invalid or expired access token.`
+- Browser clients usually cannot set `Authorization` headers on raw WebSocket connections, so query-param auth is used here.
+- Reconnect with a fresh access token after auth refresh.
+- Events are fan-out by user id. A user can have multiple open event sockets.
+
+Current server events:
+
+```ts
+type ChannelMessageCreatedEvent = {
+  type: 'channelMessageCreated';
+  channelId: string;
+  message: ChannelMessageView;
+};
+
+type DirectMessageCreatedEvent = {
+  type: 'directMessageCreated';
+  conversationId: string;
+  message: DirectMessageView;
+};
+
+type ContactRequestReceivedEvent = {
+  type: 'contactRequestReceived';
+  contact: ContactView;
+};
+
+type MediaSessionStartedEvent = {
+  type: 'mediaSessionStarted';
+  channelId: string;
+  mediaSession: MediaSessionView;
+};
+
+type MediaSessionEndedEvent = {
+  type: 'mediaSessionEnded';
+  channelId: string;
+  mediaSession: MediaSessionView;
+};
+```
+
+Nuances:
+
+- `channelMessageCreated` is currently sent to users who can at least view the channel.
+- `directMessageCreated` is sent to both DM participants, including the sender.
+- `contactRequestReceived` is sent only to the addressee of a new or reopened pending request.
+- `mediaSessionStarted` is sent only when a new media session row is created, not when an existing active one is reused.
+- `mediaSessionEnded` is sent when a session transitions to `ENDED`, either by explicit `endMediaSession` or when the last active participant leaves through `leaveMediaSession`.
 
 ### Query `myDirectConversations`
 
@@ -1028,7 +1087,7 @@ Nuances:
 - Body is trimmed server-side and must not be blank.
 - Only `TEXT` channels accept messages.
 - The author user must exist.
-- There is no realtime message subscription yet; after send, update local cache manually or refetch.
+- There is no GraphQL subscription for messages yet. Use the `/ws/events` socket for realtime fan-out, or update local cache after send.
 
 ### Mutation `startMediaSession(input)`
 
@@ -1117,6 +1176,53 @@ Nuances:
 - The media session must exist and be `ACTIVE`.
 - User must exist.
 
+### Mutation `leaveMediaSession(mediaSessionId)`
+
+Marks the current user as left from a media session.
+
+Mutation:
+
+```graphql
+mutation LeaveMediaSession($mediaSessionId: UUID!) {
+  leaveMediaSession(mediaSessionId: $mediaSessionId)
+}
+```
+
+Rules:
+
+- Requires `Authorization: Bearer <accessToken>`.
+- Returns `true` when the caller had an active participant row and is now marked left.
+- Returns `false` when the caller was already absent or the session is already ended/missing.
+- If that caller was the last active participant, the media session transitions to `ENDED`.
+- When the session ends this way, `activeMediaSessions` stops returning it, event WS emits `mediaSessionEnded`, and signaling sockets for that session are closed.
+
+### Mutation `endMediaSession(mediaSessionId)`
+
+Explicitly ends an active media session and returns its ended view.
+
+Mutation:
+
+```graphql
+mutation EndMediaSession($mediaSessionId: UUID!) {
+  endMediaSession(mediaSessionId: $mediaSessionId) {
+    id
+    channelId
+    type
+    status
+    startedAt
+  }
+}
+```
+
+Rules:
+
+- Requires `Authorization: Bearer <accessToken>`.
+- Allowed for the session creator or the channel owner.
+- Marks all still-active participants as left.
+- Sets session `status` to `ENDED`.
+- Emits `mediaSessionEnded` on `/ws/events`.
+- Closes active signaling sockets for that media session with reason `Media session has ended.`
+
 ### `MediaJoinTicket` Shape
 
 ```ts
@@ -1184,6 +1290,7 @@ Nuances:
 - The sender does not receive its own relayed signal.
 - If client text is valid JSON, server sends it as JSON `payload`.
 - If client text is not JSON, server wraps it as string `payload`.
+- When a session is ended through GraphQL, server closes signaling sockets for that session with reason `Media session has ended.`
 
 Suggested client message payloads for WebRTC signaling:
 
@@ -1233,7 +1340,6 @@ Do not invent these endpoints yet; they are not implemented:
 - channel create/update/delete/reorder
 - channel invites
 - realtime text message subscriptions
-- media session end/leave endpoint
 - file/media upload endpoint
 - sensitive-field access filtering
 

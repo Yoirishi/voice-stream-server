@@ -16,6 +16,8 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - GraphQL `me` returns the current safe `AuthUserView` from the bearer token and database user row.
 - GraphQL contacts API now includes `myContacts`, `incomingContactRequests`, `outgoingContactRequests`, `findUsers(query)`, `sendContactRequest`, `acceptContactRequest`, `declineContactRequest`, `removeContact`, and `blockUser`.
 - GraphQL direct-message API now includes `myDirectConversations`, `directMessages(conversationId, limit)`, `startDirectConversation(userId)`, and `sendDirectMessage(input)`.
+- GraphQL media API now includes `activeMediaSessions(channelId)`, `startMediaSession(input)`, `joinMediaSession(input)`, `leaveMediaSession(mediaSessionId)`, and `endMediaSession(mediaSessionId)`.
+- Realtime app events are available over `ws://.../ws/events?token=<accessToken>`.
 - GraphQL `myChannels` is the frontend channel tree. It starts from `channel_members`, requires effective `channel.view`, hides private channels without access, and returns the caller's primary role plus computed channel permissions.
 - GraphQL `channelMembers(channelId)` returns active members plus their expanded role list. `addChannelMember` auto-assigns the system `USER` role, `removeChannelMember` marks `left_at` and clears role assignments, and `assignChannelRole` appends roles idempotently.
 - GraphQL `channelRoles(channelId)` now returns each role with sparse explicit permission rules. `createChannelRole`/`updateChannelRole`/`deleteChannelRole` work only for `CUSTOM` roles, and `setRolePermission` upserts or clears explicit permission rows.
@@ -44,8 +46,13 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - DM MVP is strictly 1:1. `direct_conversations` stores the user pair, while `direct_conversation_members` mirrors membership for access checks and future extension.
 - `startDirectConversation(userId)` reuses an existing DM if present and not blocked; creating a brand-new DM requires an `ACCEPTED` contact relation.
 - `sendDirectMessage` requires membership and rejects blocked relationships, but existing conversations can still be listed/read after contacts are removed.
+- Event WS currently emits `channelMessageCreated`, `directMessageCreated`, `contactRequestReceived`, `mediaSessionStarted`, and `mediaSessionEnded`.
+- Event WS authenticates with the bearer access token in the query string because browser WebSocket clients cannot reliably set `Authorization` headers.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.
+- `leaveMediaSession(mediaSessionId)` marks the caller's active participant row as left; if that was the last active participant, the session transitions to `ENDED`.
+- `endMediaSession(mediaSessionId)` is allowed for the session creator or the channel owner, marks active participants as left, emits `mediaSessionEnded`, and closes signaling sockets for that session.
 - Signaling uses `ws://.../ws/signaling/{mediaSessionId}?token={mediaToken}` and currently relays JSON messages to other peers in the same media session.
+- When a session ends, active signaling peers for that session are closed with reason `Media session has ended.`.
 - Direct per-user access overrides and sensitive-field filtering are planned but not implemented yet.
 
 ## Sensitive Data

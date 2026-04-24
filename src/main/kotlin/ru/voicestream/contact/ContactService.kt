@@ -1,6 +1,8 @@
 package ru.voicestream.contact
 
 import ru.voicestream.auth.AuthUserView
+import ru.voicestream.events.EventHub
+import ru.voicestream.events.EventPayloads
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
@@ -13,6 +15,7 @@ import java.util.UUID
 @ApplicationScoped
 class ContactService(
     private val entityManager: EntityManager,
+    private val eventHub: EventHub,
 ) {
     fun relationshipStatus(firstUserId: UUID, secondUserId: UUID): ContactStatus? =
         findContactBetweenUsers(firstUserId, secondUserId)?.status
@@ -108,9 +111,11 @@ class ContactService(
     @Transactional
     fun sendContactRequest(userId: UUID, currentUserId: UUID): ContactView {
         require(currentUserId != userId) { "Cannot send a contact request to yourself." }
+        val currentUser = requireActiveUser(currentUserId)
         val targetUser = requireActiveUser(userId)
         val contact = findContactBetweenUsers(currentUserId, userId)
         val now = OffsetDateTime.now()
+        var shouldNotifyRecipient = false
 
         val result = when {
             contact == null -> UserContactEntity().apply {
@@ -120,6 +125,7 @@ class ContactService(
                 status = ContactStatus.PENDING
                 createdAt = now
                 updatedAt = now
+                shouldNotifyRecipient = true
                 entityManager.persist(this)
             }
 
@@ -145,11 +151,21 @@ class ContactService(
                 contact.respondedAt = null
                 contact.blockedAt = null
                 contact.updatedAt = now
+                shouldNotifyRecipient = true
                 contact
             }
         }
 
-        return contactView(result, currentUserId, mapOf(userId to targetUser))
+        val senderView = contactView(result, currentUserId, mapOf(userId to targetUser))
+        if (shouldNotifyRecipient) {
+            val recipientView = contactView(result, userId, mapOf(currentUserId to currentUser))
+            eventHub.publishToUsers(
+                userIds = setOf(userId),
+                message = EventPayloads.contactRequestReceived(recipientView).toString(),
+            )
+        }
+
+        return senderView
     }
 
     @Transactional

@@ -1,6 +1,8 @@
 package ru.voicestream.channel
 
 import ru.voicestream.auth.AuthUserView
+import ru.voicestream.events.EventHub
+import ru.voicestream.events.EventPayloads
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
@@ -21,6 +23,7 @@ import java.util.UUID
 @ApplicationScoped
 class ChannelCatalogService(
     private val entityManager: EntityManager,
+    private val eventHub: EventHub,
 ) {
     fun channelDirectory(): ChannelDirectory {
         val groups = entityManager
@@ -125,6 +128,44 @@ class ChannelCatalogService(
     fun channelMembers(channelId: UUID, currentUserId: UUID): List<ChannelMemberView> {
         requireChannelPermission(channelId, currentUserId, "view channel members") { it.canView }
         return activeMemberViews(channelId)
+    }
+
+    fun visibleChannelUserIds(channelId: UUID): Set<UUID> {
+        val channel = requireNotNull(entityManager.find(ChannelEntity::class.java, channelId)) {
+            "Channel $channelId was not found."
+        }
+        val members = entityManager
+            .createQuery(
+                """
+                select m from ChannelMemberEntity m
+                where m.channelId = :channelId
+                and m.leftAt is null
+                """.trimIndent(),
+                ChannelMemberEntity::class.java,
+            )
+            .setParameter("channelId", channelId)
+            .resultList
+        if (members.isEmpty()) {
+            return setOf(requireNotNull(channel.ownerUserId))
+        }
+
+        val memberIds = members.map { requireNotNull(it.id) }
+        val rolesByMemberId = rolesByMemberId(memberIds)
+        val permissionsByRoleId = permissionsByRoleId(
+            rolesByMemberId.values
+                .flatten()
+                .map { requireNotNull(it.id) }
+                .toSet(),
+        )
+
+        return members
+            .filter { member ->
+                val roles = rolesByMemberId[requireNotNull(member.id)].orEmpty()
+                effectivePermissions(channel, roles, permissionsByRoleId).canView
+            }
+            .map { requireNotNull(it.userId) }
+            .toMutableSet()
+            .apply { add(requireNotNull(channel.ownerUserId)) }
     }
 
     @Transactional
@@ -361,7 +402,12 @@ class ChannelCatalogService(
         }
 
         entityManager.persist(message)
-        return message.toView()
+        val messageView = message.toView()
+        eventHub.publishToUsers(
+            userIds = visibleChannelUserIds(channelId),
+            message = EventPayloads.channelMessageCreated(messageView).toString(),
+        )
+        return messageView
     }
 
     private fun activeMemberViews(channelId: UUID): List<ChannelMemberView> {

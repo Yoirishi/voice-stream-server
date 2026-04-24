@@ -4,13 +4,17 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
 import org.eclipse.microprofile.config.inject.ConfigProperty
+import ru.voicestream.channel.ChannelCatalogService
 import ru.voicestream.domain.ChannelType
 import ru.voicestream.domain.MediaSessionStatus
 import ru.voicestream.domain.MediaSessionType
+import ru.voicestream.events.EventHub
+import ru.voicestream.events.EventPayloads
 import ru.voicestream.persistence.entity.ChannelEntity
 import ru.voicestream.persistence.entity.MediaSessionEntity
 import ru.voicestream.persistence.entity.MediaSessionParticipantEntity
 import ru.voicestream.persistence.entity.UserEntity
+import ru.voicestream.signaling.SignalingHub
 import java.time.OffsetDateTime
 import java.util.UUID
 
@@ -18,6 +22,9 @@ import java.util.UUID
 class MediaSessionService(
     private val entityManager: EntityManager,
     private val mediaTokenService: MediaTokenService,
+    private val channelCatalogService: ChannelCatalogService,
+    private val eventHub: EventHub,
+    private val signalingHub: SignalingHub,
 ) {
     @ConfigProperty(name = "voice-stream.media.sfu-provider")
     lateinit var sfuProvider: String
@@ -35,7 +42,8 @@ class MediaSessionService(
             "User ${input.userId} was not found."
         }
 
-        val session = activeSession(channel, input.type) ?: createSession(channel, input)
+        val existingSession = activeSession(channel, input.type)
+        val session = existingSession ?: createSession(channel, input)
         joinParticipant(
             mediaSessionId = requireNotNull(session.id),
             userId = input.userId,
@@ -43,6 +51,14 @@ class MediaSessionService(
             canPublishScreen = input.canPublishScreen,
             canSubscribe = true,
         )
+
+        if (existingSession == null) {
+            val sessionView = session.toView()
+            eventHub.publishToUsers(
+                userIds = channelCatalogService.visibleChannelUserIds(requireNotNull(channel.id)),
+                message = EventPayloads.mediaSessionStarted(sessionView).toString(),
+            )
+        }
 
         return issueTicket(session, input.userId, input.canPublishAudio, input.canPublishScreen, canSubscribe = true)
     }
@@ -66,6 +82,43 @@ class MediaSessionService(
         )
 
         return issueTicket(session, input.userId, input.canPublishAudio, input.canPublishScreen, input.canSubscribe)
+    }
+
+    @Transactional
+    fun leaveSession(mediaSessionId: UUID, userId: UUID): Boolean {
+        val session = entityManager.find(MediaSessionEntity::class.java, mediaSessionId) ?: return false
+        if (session.status != MediaSessionStatus.ACTIVE) {
+            return false
+        }
+
+        val participant = activeParticipant(mediaSessionId, userId) ?: return false
+        val now = OffsetDateTime.now()
+        participant.leftAt = now
+        session.updatedAt = now
+
+        if (!hasActiveParticipants(mediaSessionId)) {
+            endSessionInternal(session, now)
+        }
+
+        return true
+    }
+
+    @Transactional
+    fun endSession(mediaSessionId: UUID, currentUserId: UUID): MediaSessionView {
+        val session = requireNotNull(entityManager.find(MediaSessionEntity::class.java, mediaSessionId)) {
+            "Media session $mediaSessionId was not found."
+        }
+        val channel = requireNotNull(entityManager.find(ChannelEntity::class.java, requireNotNull(session.channelId))) {
+            "Channel ${session.channelId} was not found."
+        }
+        require(
+            currentUserId == requireNotNull(session.createdByUserId) ||
+                currentUserId == requireNotNull(channel.ownerUserId),
+        ) {
+            "Current user cannot end media session $mediaSessionId."
+        }
+
+        return endSessionInternal(session, OffsetDateTime.now())
     }
 
     fun activeSessions(channelId: UUID): List<MediaSessionView> =
@@ -107,6 +160,38 @@ class MediaSessionService(
             .setMaxResults(1)
             .resultList
             .firstOrNull()
+
+    private fun activeParticipant(mediaSessionId: UUID, userId: UUID): MediaSessionParticipantEntity? =
+        entityManager
+            .createQuery(
+                """
+                select p from MediaSessionParticipantEntity p
+                where p.mediaSessionId = :mediaSessionId
+                and p.userId = :userId
+                and p.leftAt is null
+                """.trimIndent(),
+                MediaSessionParticipantEntity::class.java,
+            )
+            .setParameter("mediaSessionId", mediaSessionId)
+            .setParameter("userId", userId)
+            .setMaxResults(1)
+            .resultList
+            .firstOrNull()
+
+    private fun hasActiveParticipants(mediaSessionId: UUID): Boolean =
+        entityManager
+            .createQuery(
+                """
+                select p from MediaSessionParticipantEntity p
+                where p.mediaSessionId = :mediaSessionId
+                and p.leftAt is null
+                """.trimIndent(),
+                MediaSessionParticipantEntity::class.java,
+            )
+            .setParameter("mediaSessionId", mediaSessionId)
+            .setMaxResults(1)
+            .resultList
+            .isNotEmpty()
 
     private fun createSession(channel: ChannelEntity, input: StartMediaSessionRequest): MediaSessionEntity {
         val now = OffsetDateTime.now()
@@ -159,6 +244,38 @@ class MediaSessionService(
         participant.canPublishScreen = canPublishScreen
         participant.canSubscribe = canSubscribe
         participant.leftAt = null
+    }
+
+    private fun endSessionInternal(session: MediaSessionEntity, endedAt: OffsetDateTime): MediaSessionView {
+        if (session.status == MediaSessionStatus.ENDED) {
+            return session.toView()
+        }
+
+        val mediaSessionId = requireNotNull(session.id)
+        entityManager
+            .createQuery(
+                """
+                select p from MediaSessionParticipantEntity p
+                where p.mediaSessionId = :mediaSessionId
+                and p.leftAt is null
+                """.trimIndent(),
+                MediaSessionParticipantEntity::class.java,
+            )
+            .setParameter("mediaSessionId", mediaSessionId)
+            .resultList
+            .forEach { it.leftAt = endedAt }
+
+        session.status = MediaSessionStatus.ENDED
+        session.endedAt = endedAt
+        session.updatedAt = endedAt
+
+        val sessionView = session.toView()
+        eventHub.publishToUsers(
+            userIds = channelCatalogService.visibleChannelUserIds(requireNotNull(session.channelId)),
+            message = EventPayloads.mediaSessionEnded(sessionView).toString(),
+        )
+        signalingHub.closeMediaSession(mediaSessionId, "Media session has ended.")
+        return sessionView
     }
 
     private fun issueTicket(

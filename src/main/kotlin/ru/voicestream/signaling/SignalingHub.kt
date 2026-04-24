@@ -44,8 +44,25 @@ class SignalingHub {
 
     fun leave(connectionId: String) {
         val peer = peersByConnectionId.remove(connectionId) ?: return
-        connectionIdsByMediaSessionId[peer.mediaSessionId]?.remove(connectionId)
+        connectionIdsByMediaSessionId[peer.mediaSessionId]?.let { connectionIds ->
+            connectionIds.remove(connectionId)
+            if (connectionIds.isEmpty()) {
+                connectionIdsByMediaSessionId.remove(peer.mediaSessionId, connectionIds)
+            }
+        }
         broadcastServerEvent(peer.mediaSessionId, "peerLeft", connectionId)
+    }
+
+    fun closeMediaSession(mediaSessionId: UUID, reason: String) {
+        val connectionIds = connectionIdsByMediaSessionId.remove(mediaSessionId)?.toSet().orEmpty()
+        connectionIds.forEach { connectionId ->
+            val peer = peersByConnectionId.remove(connectionId) ?: return@forEach
+            if (peer.session.isOpen) {
+                runCatching {
+                    peer.session.close(CloseReason(CloseReason.CloseCodes.NORMAL_CLOSURE, reason))
+                }
+            }
+        }
     }
 
     fun close(session: Session, reason: String) {

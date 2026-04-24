@@ -2,6 +2,8 @@ package ru.voicestream.direct
 
 import ru.voicestream.auth.AuthUserView
 import ru.voicestream.contact.ContactService
+import ru.voicestream.events.EventHub
+import ru.voicestream.events.EventPayloads
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
@@ -17,6 +19,7 @@ import java.util.UUID
 class DirectConversationService(
     private val entityManager: EntityManager,
     private val contactService: ContactService,
+    private val eventHub: EventHub,
 ) {
     fun myDirectConversations(currentUserId: UUID): List<DirectConversationView> {
         val conversations = entityManager
@@ -132,7 +135,12 @@ class DirectConversationService(
         }
         entityManager.persist(message)
         access.conversation.updatedAt = now
-        return message.toView()
+        val messageView = message.toView()
+        eventHub.publishToUsers(
+            userIds = setOf(currentUserId, access.otherUserId),
+            message = EventPayloads.directMessageCreated(messageView).toString(),
+        )
+        return messageView
     }
 
     private fun requireConversationAccess(conversationId: UUID, currentUserId: UUID): DirectConversationAccess {
