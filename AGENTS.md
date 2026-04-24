@@ -14,6 +14,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Frontend-facing API details live in `FRONTEND_AGENT.md`; read it before changing client contracts.
 - GraphQL uses bearer access tokens through `AuthContext`; do not accept caller user ids from GraphQL inputs.
 - GraphQL `me` returns the current safe `AuthUserView` from the bearer token and database user row.
+- GraphQL contacts API now includes `myContacts`, `incomingContactRequests`, `outgoingContactRequests`, `findUsers(query)`, `sendContactRequest`, `acceptContactRequest`, `declineContactRequest`, `removeContact`, and `blockUser`.
 - GraphQL `myChannels` is the frontend channel tree. It starts from `channel_members`, requires effective `channel.view`, hides private channels without access, and returns the caller's primary role plus computed channel permissions.
 - GraphQL `channelMembers(channelId)` returns active members plus their expanded role list. `addChannelMember` auto-assigns the system `USER` role, `removeChannelMember` marks `left_at` and clears role assignments, and `assignChannelRole` appends roles idempotently.
 - GraphQL `channelRoles(channelId)` now returns each role with sparse explicit permission rules. `createChannelRole`/`updateChannelRole`/`deleteChannelRole` work only for `CUSTOM` roles, and `setRolePermission` upserts or clears explicit permission rows.
@@ -35,6 +36,9 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Supported permission keys for MVP are `channel.view`, `message.read`, `message.send`, `voice.connect`, `voice.speak`, `screen.share`, `channel.manage`, `role.manage`, and `member.manage`.
 - Roles are scoped directly to a channel. `OWNER` and `USER` are system role kinds; custom channel roles use `CUSTOM`.
 - Channel access is modeled through channel-scoped roles and `role_permissions`.
+- Contacts live in `user_contacts` with one row per unordered user pair. `PENDING`, `ACCEPTED`, `DECLINED`, and `BLOCKED` are the current statuses.
+- `findUsers(query)` matches exact `users.id` when the query parses as UUID, otherwise it does case-insensitive partial matching on `display_name` and excludes the caller.
+- `removeContact(userId)` currently deletes non-blocked relations, so it doubles as "remove friend" and "cancel/clear request"; there is no unblock mutation yet.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.
 - Signaling uses `ws://.../ws/signaling/{mediaSessionId}?token={mediaToken}` and currently relays JSON messages to other peers in the same media session.
 - Direct per-user access overrides and sensitive-field filtering are planned but not implemented yet.

@@ -215,8 +215,135 @@ Enums are serialized as strings:
 - `ChannelType`: `TEXT`, `VOICE`
 - `RoleKind`: `OWNER`, `USER`, `CUSTOM`
 - `PermissionEffect`: `ALLOW`, `DENY`
+- `ContactStatus`: `PENDING`, `ACCEPTED`, `DECLINED`, `BLOCKED`
 - `MediaSessionType`: `VOICE`, `SCREEN_SHARE`
 - `MediaSessionStatus`: `ACTIVE`, `ENDED`
+
+### Query `myContacts`
+
+Returns the caller's accepted contacts.
+
+Query:
+
+```graphql
+query MyContacts {
+  myContacts {
+    id
+    status
+    user {
+      id
+      username
+      displayName
+      avatarMediaKey
+    }
+    createdAt
+    updatedAt
+    respondedAt
+    blockedAt
+  }
+}
+```
+
+Shape:
+
+```ts
+type ContactView = {
+  id: string;
+  status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'BLOCKED';
+  user: AuthUserView;
+  createdAt: string;
+  updatedAt: string;
+  respondedAt: string | null;
+  blockedAt: string | null;
+};
+```
+
+Nuances:
+
+- Returns only `ACCEPTED` rows.
+- `user` is always the other side of the relationship, never the caller.
+- Sorted by `displayName`, then `username`.
+
+### Query `incomingContactRequests`
+
+Returns pending requests where the caller is the addressee.
+
+### Query `outgoingContactRequests`
+
+Returns pending requests where the caller is the requester.
+
+Both queries return `ContactView[]`.
+
+Nuances:
+
+- Both lists include only `PENDING` rows.
+- `incomingContactRequests` and `outgoingContactRequests` are sorted by newest first.
+
+### Query `findUsers(query)`
+
+Finds users for the contact picker.
+
+Query:
+
+```graphql
+query FindUsers($query: String!) {
+  findUsers(query: $query) {
+    id
+    username
+    displayName
+    avatarMediaKey
+  }
+}
+```
+
+Nuances:
+
+- If `query` parses as UUID, backend does an exact `id` match.
+- Otherwise backend does case-insensitive partial matching on `displayName`.
+- The current caller is excluded from results.
+- Disabled users are excluded.
+- Display-name search is capped to 20 rows.
+
+### Mutation `sendContactRequest(userId)`
+
+Creates or reopens a pending contact request.
+
+Rules:
+
+- Requires `Authorization: Bearer <accessToken>`.
+- Refuses self-requests.
+- Returns the existing row unchanged when the relation is already `ACCEPTED` or when the caller already has an outgoing `PENDING` request.
+- If there is already an incoming request from that user, backend returns a GraphQL error; call `acceptContactRequest` instead.
+- If either side already has a `BLOCKED` relation, backend returns a GraphQL error.
+- Re-sending after `DECLINED` reopens the same pair as `PENDING`.
+
+### Mutation `acceptContactRequest(userId)`
+
+Accepts an incoming pending request and returns `ContactView` with `status: ACCEPTED`.
+
+### Mutation `declineContactRequest(userId)`
+
+Declines an incoming pending request and returns `ContactView` with `status: DECLINED`.
+
+### Mutation `removeContact(userId)`
+
+Removes a non-blocked relation and returns `Boolean`.
+
+Nuances:
+
+- Returns `true` when a non-blocked row existed and was deleted.
+- Returns `false` when there was no relation or when the current relation is `BLOCKED`.
+- This currently works for accepted contacts and also clears pending/declined rows, so the frontend can use it as "remove friend" or "cancel request".
+
+### Mutation `blockUser(userId)`
+
+Blocks another user and returns `ContactView` with `status: BLOCKED`.
+
+Nuances:
+
+- Collapses any existing accepted/pending/declined relation into `BLOCKED`.
+- If the pair is already blocked, returns the current blocked row.
+- There is no unblock mutation yet.
 
 Timestamps are ISO offset date-time strings.
 

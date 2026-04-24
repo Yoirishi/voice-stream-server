@@ -102,6 +102,10 @@ Current GraphQL entry points:
 GraphQL operations require `Authorization: Bearer <accessToken>`.
 
 - `me`
+- `myContacts`
+- `incomingContactRequests`
+- `outgoingContactRequests`
+- `findUsers(query)`
 - `myChannels`
 - `channels`
 - `channelMembers(channelId)`
@@ -116,5 +120,10 @@ GraphQL operations require `Authorization: Bearer <accessToken>`.
 - `deleteChannelRole(roleId)`
 - `setRolePermission(input)`
 - `sendChannelMessage(input)`
+- `sendContactRequest(userId)`
+- `acceptContactRequest(userId)`
+- `declineContactRequest(userId)`
+- `removeContact(userId)`
+- `blockUser(userId)`
 - `startMediaSession(input)`
 - `joinMediaSession(input)`

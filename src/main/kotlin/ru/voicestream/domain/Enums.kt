@@ -25,3 +25,10 @@ enum class MediaSessionStatus {
     ACTIVE,
     ENDED,
 }
+
+enum class ContactStatus {
+    PENDING,
+    ACCEPTED,
+    DECLINED,
+    BLOCKED,
+}
