@@ -106,6 +106,8 @@ GraphQL operations require `Authorization: Bearer <accessToken>`.
 - `incomingContactRequests`
 - `outgoingContactRequests`
 - `findUsers(query)`
+- `myDirectConversations`
+- `directMessages(conversationId, limit)`
 - `myChannels`
 - `channels`
 - `channelMembers(channelId)`
@@ -125,5 +127,7 @@ GraphQL operations require `Authorization: Bearer <accessToken>`.
 - `declineContactRequest(userId)`
 - `removeContact(userId)`
 - `blockUser(userId)`
+- `startDirectConversation(userId)`
+- `sendDirectMessage(input)`
 - `startMediaSession(input)`
 - `joinMediaSession(input)`

@@ -15,6 +15,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - GraphQL uses bearer access tokens through `AuthContext`; do not accept caller user ids from GraphQL inputs.
 - GraphQL `me` returns the current safe `AuthUserView` from the bearer token and database user row.
 - GraphQL contacts API now includes `myContacts`, `incomingContactRequests`, `outgoingContactRequests`, `findUsers(query)`, `sendContactRequest`, `acceptContactRequest`, `declineContactRequest`, `removeContact`, and `blockUser`.
+- GraphQL direct-message API now includes `myDirectConversations`, `directMessages(conversationId, limit)`, `startDirectConversation(userId)`, and `sendDirectMessage(input)`.
 - GraphQL `myChannels` is the frontend channel tree. It starts from `channel_members`, requires effective `channel.view`, hides private channels without access, and returns the caller's primary role plus computed channel permissions.
 - GraphQL `channelMembers(channelId)` returns active members plus their expanded role list. `addChannelMember` auto-assigns the system `USER` role, `removeChannelMember` marks `left_at` and clears role assignments, and `assignChannelRole` appends roles idempotently.
 - GraphQL `channelRoles(channelId)` now returns each role with sparse explicit permission rules. `createChannelRole`/`updateChannelRole`/`deleteChannelRole` work only for `CUSTOM` roles, and `setRolePermission` upserts or clears explicit permission rows.
@@ -39,6 +40,10 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Contacts live in `user_contacts` with one row per unordered user pair. `PENDING`, `ACCEPTED`, `DECLINED`, and `BLOCKED` are the current statuses.
 - `findUsers(query)` matches exact `users.id` when the query parses as UUID, otherwise it does case-insensitive partial matching on `display_name` and excludes the caller.
 - `removeContact(userId)` currently deletes non-blocked relations, so it doubles as "remove friend" and "cancel/clear request"; there is no unblock mutation yet.
+- Direct conversations live in `direct_conversations`, `direct_conversation_members`, and `direct_messages`.
+- DM MVP is strictly 1:1. `direct_conversations` stores the user pair, while `direct_conversation_members` mirrors membership for access checks and future extension.
+- `startDirectConversation(userId)` reuses an existing DM if present and not blocked; creating a brand-new DM requires an `ACCEPTED` contact relation.
+- `sendDirectMessage` requires membership and rejects blocked relationships, but existing conversations can still be listed/read after contacts are removed.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.
 - Signaling uses `ws://.../ws/signaling/{mediaSessionId}?token={mediaToken}` and currently relays JSON messages to other peers in the same media session.
 - Direct per-user access overrides and sensitive-field filtering are planned but not implemented yet.

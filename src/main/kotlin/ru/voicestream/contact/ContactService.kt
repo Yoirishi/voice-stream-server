@@ -14,6 +14,9 @@ import java.util.UUID
 class ContactService(
     private val entityManager: EntityManager,
 ) {
+    fun relationshipStatus(firstUserId: UUID, secondUserId: UUID): ContactStatus? =
+        findContactBetweenUsers(firstUserId, secondUserId)?.status
+
     fun myContacts(currentUserId: UUID): List<ContactView> =
         contactViews(
             contacts(

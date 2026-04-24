@@ -347,6 +347,118 @@ Nuances:
 
 Timestamps are ISO offset date-time strings.
 
+### Query `myDirectConversations`
+
+Returns the caller's 1:1 direct conversations.
+
+Query:
+
+```graphql
+query MyDirectConversations {
+  myDirectConversations {
+    id
+    user {
+      id
+      username
+      displayName
+      avatarMediaKey
+    }
+    createdAt
+    updatedAt
+    lastMessage {
+      id
+      conversationId
+      authorUserId
+      body
+      createdAt
+      editedAt
+    }
+  }
+}
+```
+
+Shape:
+
+```ts
+type DirectConversationView = {
+  id: string;
+  user: AuthUserView;
+  createdAt: string;
+  updatedAt: string;
+  lastMessage: DirectMessageView | null;
+};
+
+type DirectMessageView = {
+  id: string;
+  conversationId: string;
+  authorUserId: string;
+  body: string;
+  createdAt: string;
+  editedAt: string | null;
+};
+```
+
+Nuances:
+
+- Current MVP supports only 1:1 DMs.
+- Conversations are ordered by `updatedAt` descending.
+- `user` is always the other participant.
+- `lastMessage` skips deleted rows and is `null` until the first message is sent.
+
+### Query `directMessages(conversationId, limit)`
+
+Returns recent non-deleted direct messages from a conversation.
+
+Nuances:
+
+- Requires membership in that DM.
+- Default `limit` is 50.
+- Backend clamps `limit` to `1..100`.
+- Backend returns messages in chronological order after selecting the latest rows.
+
+### Mutation `startDirectConversation(userId)`
+
+Starts or reuses a direct conversation with another user.
+
+Rules:
+
+- Requires `Authorization: Bearer <accessToken>`.
+- Refuses self-DMs.
+- If a DM already exists for that pair and the relation is not blocked, backend returns the existing conversation.
+- Creating a brand-new DM requires the contact relation to be `ACCEPTED`.
+- If the pair is blocked, backend returns a GraphQL error.
+
+### Mutation `sendDirectMessage(input)`
+
+Sends a text message to a direct conversation.
+
+Mutation:
+
+```graphql
+mutation SendDirectMessage($conversationId: UUID!) {
+  sendDirectMessage(
+    input: {
+      conversationId: $conversationId
+      body: "hello"
+    }
+  ) {
+    id
+    conversationId
+    authorUserId
+    body
+    createdAt
+    editedAt
+  }
+}
+```
+
+Nuances:
+
+- Requires membership in the DM.
+- Trims `body` server-side and rejects blank messages.
+- Rejects sending when the user pair is currently blocked.
+- Removing a contact does not delete an existing DM; it can still be listed/opened unless blocked.
+
 ### Query `me`
 
 Returns the current authenticated user from `Authorization: Bearer <accessToken>`.
