@@ -5,12 +5,14 @@ This harness runs browser-level WebRTC checks with fake camera and microphone de
 Current coverage:
 
 - starts two Chromium browser clients;
-- captures fake audio and video tracks with `getUserMedia`;
-- connects the clients with `RTCPeerConnection`;
-- exchanges SDP and ICE candidates inside the test;
-- checks `getStats()` until inbound RTP packets or bytes are observed.
+- registers two backend users through REST auth;
+- inserts a temporary `VOICE` channel fixture into PostgreSQL;
+- starts and joins a backend media session through GraphQL;
+- connects both browser clients to LiveKit with backend-issued `participantToken` tickets;
+- publishes fake microphone and camera tracks from one client;
+- waits until the other client subscribes to remote audio and video tracks.
 
-Run locally after installing Node dependencies:
+Run locally after installing Node dependencies and with backend + PostgreSQL + LiveKit available:
 
 ```shell
 cd e2e/media
@@ -24,6 +26,4 @@ Run through Docker Compose:
 docker compose -f compose.e2e.yaml up --abort-on-container-exit --exit-code-from media-e2e media-e2e
 ```
 
-The current test validates browser media plumbing without a selected SFU. Once the SFU is chosen, keep the same fake-media setup and replace the direct peer connection exchange with the SFU SDK plus backend-issued media tickets.
-
-The Docker Compose file also contains backend and PostgreSQL services for the later full-stack media path, but the current `media-e2e` service does not depend on them yet.
+`compose.e2e.yaml` now runs the full-stack path: PostgreSQL, backend in Quarkus dev mode, LiveKit, and the Playwright runner.

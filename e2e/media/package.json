@@ -6,6 +6,8 @@
     "test": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "1.57.0"
+    "@playwright/test": "1.57.0",
+    "livekit-client": "2.15.8",
+    "pg": "8.16.3"
   }
 }

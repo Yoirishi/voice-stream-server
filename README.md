@@ -57,6 +57,7 @@ The MVP media flow is split this way:
 - LiveKit runs as a separate SFU service in `compose.yaml` and handles actual voice/screen WebRTC transport.
 - The custom WebSocket signaling endpoint remains available as a legacy relay path and for tests.
 - `startMediaSession` / `joinMediaSession` now return LiveKit room credentials (`serverUrl`, `participantToken`) plus legacy signaling fields (`signalingUrl`, `token`) for compatibility.
+- For the current MVP media grant model, `canPublishAudio=true` allows LiveKit microphone and camera publishing; screen-share remains gated by `canPublishScreen=true`.
 
 Auth endpoints:
 
@@ -106,6 +107,8 @@ Run the browser fake-media harness:
 ```shell
 docker compose -f compose.e2e.yaml up --abort-on-container-exit --exit-code-from media-e2e media-e2e
 ```
+
+That stack now boots PostgreSQL, Quarkus, and LiveKit together, then runs a Playwright check that exercises REST auth, GraphQL media tickets, and browser-to-browser fake media through LiveKit.
 
 Current GraphQL entry points:
 

@@ -54,7 +54,7 @@ class MediaSessionGraphQLTest {
             expectedRoom = started.roomName,
             expectedName = "media_owner user",
             expectedCanSubscribe = true,
-            expectedSources = setOf("microphone"),
+            expectedSources = setOf("microphone", "camera"),
         )
         assertLiveKitGrant(
             token = joined.participantToken,

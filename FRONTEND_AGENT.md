@@ -1136,6 +1136,7 @@ Nuances:
 - Preferred LiveKit fields are `serverUrl` and `participantToken`.
 - `signalingUrl` and `token` are legacy compatibility fields for the internal signaling relay.
 - For new frontend work, connect the LiveKit SDK with `serverUrl` + `participantToken`.
+- `canPublishAudio=true` currently maps to LiveKit microphone + camera publish sources; there is no separate webcam capability yet.
 
 ### Mutation `joinMediaSession(input)`
 

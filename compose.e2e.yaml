@@ -13,6 +13,12 @@ services:
     volumes:
       - voice_stream_e2e_postgres_data:/var/lib/postgresql
 
+  livekit:
+    image: livekit/livekit-server:v1.11.0
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./ops/livekit/e2e.yaml:/etc/livekit.yaml:ro
+
   backend:
     image: eclipse-temurin:21-jdk
     working_dir: /workspace
@@ -20,25 +26,47 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      livekit:
+        condition: service_started
     environment:
       DB_JDBC_URL: jdbc:postgresql://postgres:5432/voice_stream
       DB_USERNAME: voice_stream
       DB_PASSWORD: voice_stream
+      GRADLE_USER_HOME: /gradle-home
+      MEDIA_SFU_PROVIDER: livekit
+      MEDIA_SFU_URL: ws://livekit:7880
       MEDIA_SIGNALING_URL: ws://backend:8080/ws/signaling
+      MEDIA_LIVEKIT_SERVER_URL: ws://livekit:7880
+      MEDIA_LIVEKIT_API_KEY: devkey
+      MEDIA_LIVEKIT_API_SECRET: secret
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/q/graphql-ui/"]
+      interval: 5s
+      timeout: 5s
+      start_period: 30s
+      retries: 90
     ports:
       - "8080:8080"
     volumes:
       - .:/workspace
+      - voice_stream_e2e_gradle_home:/gradle-home
 
   media-e2e:
     image: mcr.microsoft.com/playwright:v1.57.0-noble
     working_dir: /workspace/e2e/media
     command: ["sh", "-lc", "npm install --no-audit --no-fund && npm test"]
+    depends_on:
+      backend:
+        condition: service_healthy
+      livekit:
+        condition: service_started
     environment:
       BACKEND_BASE_URL: http://backend:8080
+      POSTGRES_URL: postgres://voice_stream:voice_stream@postgres:5432/voice_stream
       CI: "true"
     volumes:
       - .:/workspace
 
 volumes:
   voice_stream_e2e_postgres_data:
+  voice_stream_e2e_gradle_home:

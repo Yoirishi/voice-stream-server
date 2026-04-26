@@ -24,7 +24,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - GraphQL `channelRoles(channelId)` now returns each role with sparse explicit permission rules. `createChannelRole`/`updateChannelRole`/`deleteChannelRole` work only for `CUSTOM` roles, and `setRolePermission` upserts or clears explicit permission rows.
 - Media is not handled by Quarkus directly. Quarkus issues media join tickets; LiveKit runs as the default SFU in Docker Compose and moves audio/screen packets.
 - Unit tests use JUnit 5 and Mockito-Kotlin. Integration tests can use QuarkusTest, RestAssured, and JDK WebSocket clients.
-- Browser media e2e scaffolding lives in `e2e/media` and runs through `compose.e2e.yaml`; it currently validates fake camera/mic WebRTC flow before an SFU is selected.
+- Browser media e2e scaffolding lives in `e2e/media` and runs through `compose.e2e.yaml`; it now validates the full-stack fake camera/mic path through backend-issued LiveKit tickets.
 
 ## Domain Decisions
 
@@ -51,6 +51,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - Event WS authenticates with the bearer access token in the query string because browser WebSocket clients cannot reliably set `Authorization` headers.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.
 - `startMediaSession` / `joinMediaSession` now return dual media credentials: preferred `serverUrl` + `participantToken` for LiveKit, and legacy `signalingUrl` + `token` for the internal signaling relay.
+- For LiveKit tokens, `canPublishAudio` currently grants both microphone and camera publish sources; there is not yet a separate webcam-specific capability.
 - `leaveMediaSession(mediaSessionId)` marks the caller's active participant row as left; if that was the last active participant, the session transitions to `ENDED`.
 - `endMediaSession(mediaSessionId)` is allowed for the session creator or the channel owner, marks active participants as left, emits `mediaSessionEnded`, and closes signaling sockets for that session.
 - LiveKit local config lives in `ops/livekit/local.yaml`. It is intentionally localhost-only (`node_ip: 127.0.0.1`) and not production-safe.

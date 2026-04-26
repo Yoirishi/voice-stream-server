@@ -60,6 +60,7 @@ class LiveKitTokenService {
         apply {
             if (input.canPublishAudio) {
                 add("microphone")
+                add("camera")
             }
             if (input.canPublishScreen) {
                 add("screen_share")
