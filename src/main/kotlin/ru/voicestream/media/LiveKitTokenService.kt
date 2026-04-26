@@ -12,19 +12,16 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 @ApplicationScoped
-class LiveKitTokenService {
-    @ConfigProperty(name = "voice-stream.media.livekit.server-url")
-    lateinit var serverUrl: String
-
-    @ConfigProperty(name = "voice-stream.media.livekit.api-key")
-    lateinit var apiKey: String
-
-    @ConfigProperty(name = "voice-stream.media.livekit.api-secret")
-    lateinit var apiSecret: String
-
-    @ConfigProperty(name = "voice-stream.media.livekit.token-ttl-seconds")
-    var tokenTtlSeconds: Long = 600
-
+class LiveKitTokenService(
+    @param:ConfigProperty(name = "voice-stream.media.livekit.server-url")
+    private val serverUrl: String,
+    @param:ConfigProperty(name = "voice-stream.media.livekit.api-key")
+    private val apiKey: String,
+    @param:ConfigProperty(name = "voice-stream.media.livekit.api-secret")
+    private val apiSecret: String,
+    @param:ConfigProperty(name = "voice-stream.media.livekit.token-ttl-seconds")
+    private val tokenTtlSeconds: Long,
+) {
     fun issue(input: LiveKitTokenInput): IssuedLiveKitToken {
         val now = OffsetDateTime.now()
         val expiresAt = now.plusSeconds(tokenTtlSeconds)

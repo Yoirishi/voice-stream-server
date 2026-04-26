@@ -47,9 +47,9 @@ class AuthTokenServiceTest {
     }
 
     private fun service(accessTokenTtlSeconds: Long): AuthTokenService =
-        AuthTokenService().apply {
-            tokenSecret = "test-auth-token-secret"
-            this.accessTokenTtlSeconds = accessTokenTtlSeconds
-            refreshTokenTtlSeconds = 60
-        }
+        AuthTokenService(
+            tokenSecret = "test-auth-token-secret",
+            accessTokenTtlSeconds = accessTokenTtlSeconds,
+            refreshTokenTtlSeconds = 60,
+        )
 }

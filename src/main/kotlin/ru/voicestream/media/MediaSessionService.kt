@@ -27,16 +27,11 @@ class MediaSessionService(
     private val channelCatalogService: ChannelCatalogService,
     private val eventHub: EventHub,
     private val signalingHub: SignalingHub,
+    @param:ConfigProperty(name = "voice-stream.media.sfu-provider")
+    private val sfuProvider: String,
+    @param:ConfigProperty(name = "voice-stream.media.signaling-url")
+    private val signalingUrl: String,
 ) {
-    @ConfigProperty(name = "voice-stream.media.sfu-provider")
-    lateinit var sfuProvider: String
-
-    @ConfigProperty(name = "voice-stream.media.sfu-url")
-    lateinit var sfuUrl: String
-
-    @ConfigProperty(name = "voice-stream.media.signaling-url")
-    lateinit var signalingUrl: String
-
     @Transactional
     fun startSession(input: StartMediaSessionRequest): MediaJoinTicket {
         val channel = requireVoiceChannel(input.channelId)

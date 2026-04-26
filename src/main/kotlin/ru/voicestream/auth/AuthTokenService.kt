@@ -14,16 +14,14 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 @ApplicationScoped
-class AuthTokenService {
-    @ConfigProperty(name = "voice-stream.auth.token-secret")
-    lateinit var tokenSecret: String
-
-    @ConfigProperty(name = "voice-stream.auth.access-token-ttl-seconds")
-    var accessTokenTtlSeconds: Long = 900
-
-    @ConfigProperty(name = "voice-stream.auth.refresh-token-ttl-seconds")
-    var refreshTokenTtlSeconds: Long = 2_592_000
-
+class AuthTokenService(
+    @param:ConfigProperty(name = "voice-stream.auth.token-secret")
+    private val tokenSecret: String,
+    @param:ConfigProperty(name = "voice-stream.auth.access-token-ttl-seconds")
+    private val accessTokenTtlSeconds: Long,
+    @param:ConfigProperty(name = "voice-stream.auth.refresh-token-ttl-seconds")
+    private val refreshTokenTtlSeconds: Long,
+) {
     private val secureRandom = SecureRandom()
 
     fun issueAccessToken(userId: UUID, username: String): IssuedAccessToken {

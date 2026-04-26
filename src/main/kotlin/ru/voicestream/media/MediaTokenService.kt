@@ -11,13 +11,12 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 @ApplicationScoped
-class MediaTokenService {
-    @ConfigProperty(name = "voice-stream.media.token-secret")
-    lateinit var tokenSecret: String
-
-    @ConfigProperty(name = "voice-stream.media.token-ttl-seconds")
-    var tokenTtlSeconds: Long = 600
-
+class MediaTokenService(
+    @param:ConfigProperty(name = "voice-stream.media.token-secret")
+    private val tokenSecret: String,
+    @param:ConfigProperty(name = "voice-stream.media.token-ttl-seconds")
+    private val tokenTtlSeconds: Long,
+) {
     fun issue(input: MediaTokenInput): IssuedMediaToken {
         val expiresAt = OffsetDateTime.now().plusSeconds(tokenTtlSeconds)
         val payload = listOf(

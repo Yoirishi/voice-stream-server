@@ -9,10 +9,10 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 
 @ApplicationScoped
-class PasswordHashService {
-    @ConfigProperty(name = "voice-stream.auth.password-hash-iterations")
-    var iterations: Int = 210_000
-
+class PasswordHashService(
+    @param:ConfigProperty(name = "voice-stream.auth.password-hash-iterations")
+    private val iterations: Int,
+) {
     private val secureRandom = SecureRandom()
 
     fun hash(password: String): String {
