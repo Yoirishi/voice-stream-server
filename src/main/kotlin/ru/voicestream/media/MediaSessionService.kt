@@ -11,6 +11,7 @@ import ru.voicestream.domain.MediaSessionStatus
 import ru.voicestream.domain.MediaSessionType
 import ru.voicestream.events.EventHub
 import ru.voicestream.events.EventPayloads
+import ru.voicestream.presence.PresenceService
 import ru.voicestream.persistence.entity.ChannelEntity
 import ru.voicestream.persistence.entity.MediaSessionEntity
 import ru.voicestream.persistence.entity.MediaSessionParticipantEntity
@@ -27,6 +28,7 @@ class MediaSessionService(
     private val channelCatalogService: ChannelCatalogService,
     private val eventHub: EventHub,
     private val signalingHub: SignalingHub,
+    private val presenceService: PresenceService,
     @param:ConfigProperty(name = "voice-stream.media.sfu-provider")
     private val sfuProvider: String,
     @param:ConfigProperty(name = "voice-stream.media.signaling-url")
@@ -45,6 +47,11 @@ class MediaSessionService(
             canPublishAudio = input.canPublishAudio,
             canPublishScreen = input.canPublishScreen,
             canSubscribe = true,
+        )
+        presenceService.onMediaSessionJoined(
+            userId = input.userId,
+            mediaSessionId = requireNotNull(session.id),
+            channelId = requireNotNull(channel.id),
         )
 
         if (existingSession == null) {
@@ -79,6 +86,11 @@ class MediaSessionService(
             canPublishScreen = input.canPublishScreen,
             canSubscribe = input.canSubscribe,
         )
+        presenceService.onMediaSessionJoined(
+            userId = input.userId,
+            mediaSessionId = requireNotNull(session.id),
+            channelId = requireNotNull(session.channelId),
+        )
 
         return issueTicket(
             session = session,
@@ -100,6 +112,11 @@ class MediaSessionService(
         val now = OffsetDateTime.now()
         participant.leftAt = now
         session.updatedAt = now
+        presenceService.onMediaSessionLeft(
+            userId = userId,
+            mediaSessionId = mediaSessionId,
+            channelId = requireNotNull(session.channelId),
+        )
 
         if (!hasActiveParticipants(mediaSessionId)) {
             endSessionInternal(session, now)
@@ -265,7 +282,7 @@ class MediaSessionService(
         }
 
         val mediaSessionId = requireNotNull(session.id)
-        entityManager
+        val userIds = entityManager
             .createQuery(
                 """
                 select p from MediaSessionParticipantEntity p
@@ -276,11 +293,18 @@ class MediaSessionService(
             )
             .setParameter("mediaSessionId", mediaSessionId)
             .resultList
-            .forEach { it.leftAt = endedAt }
+            .onEach { it.leftAt = endedAt }
+            .map { requireNotNull(it.userId) }
+            .toSet()
 
         session.status = MediaSessionStatus.ENDED
         session.endedAt = endedAt
         session.updatedAt = endedAt
+        presenceService.onMediaSessionEnded(
+            mediaSessionId = mediaSessionId,
+            channelId = requireNotNull(session.channelId),
+            userIds = userIds,
+        )
 
         val sessionView = session.toView()
         eventHub.publishToUsers(

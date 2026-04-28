@@ -5,6 +5,8 @@ import ru.voicestream.channel.ChannelMessageView
 import ru.voicestream.contact.ContactView
 import ru.voicestream.direct.DirectMessageView
 import ru.voicestream.media.MediaSessionView
+import ru.voicestream.presence.ChannelVoiceStateView
+import ru.voicestream.presence.UserPresenceView
 import jakarta.json.Json
 import jakarta.json.JsonObject
 import jakarta.json.JsonObjectBuilder
@@ -42,6 +44,19 @@ object EventPayloads {
             .add("type", "mediaSessionEnded")
             .add("channelId", mediaSession.channelId.toString())
             .add("mediaSession", mediaSession(mediaSession))
+            .build()
+
+    fun userPresenceUpdated(presence: UserPresenceView): JsonObject =
+        Json.createObjectBuilder()
+            .add("type", "userPresenceUpdated")
+            .add("presence", userPresence(presence))
+            .build()
+
+    fun channelVoiceStateUpdated(voiceState: ChannelVoiceStateView): JsonObject =
+        Json.createObjectBuilder()
+            .add("type", "channelVoiceStateUpdated")
+            .add("channelId", voiceState.channelId.toString())
+            .add("voiceState", channelVoiceState(voiceState))
             .build()
 
     private fun channelMessage(message: ChannelMessageView): JsonObject =
@@ -84,6 +99,31 @@ object EventPayloads {
             .add("roomName", mediaSession.roomName)
             .add("status", mediaSession.status.name)
             .add("startedAt", mediaSession.startedAt.toString())
+            .build()
+
+    private fun userPresence(presence: UserPresenceView): JsonObject =
+        Json.createObjectBuilder()
+            .add("userId", presence.userId.toString())
+            .add("onlineStatus", presence.onlineStatus.name)
+            .addNullable("voiceChannelId", presence.voiceChannelId?.toString())
+            .addNullable("mediaSessionId", presence.mediaSessionId?.toString())
+            .add("muted", presence.muted)
+            .add("deafened", presence.deafened)
+            .add("screenSharing", presence.screenSharing)
+            .addNullable("updatedAt", presence.updatedAt?.toString())
+            .build()
+
+    private fun channelVoiceState(voiceState: ChannelVoiceStateView): JsonObject =
+        Json.createObjectBuilder()
+            .add("userId", voiceState.user.id.toString())
+            .add("channelId", voiceState.channelId.toString())
+            .addNullable("mediaSessionId", voiceState.mediaSessionId?.toString())
+            .add("active", voiceState.active)
+            .add("muted", voiceState.muted)
+            .add("deafened", voiceState.deafened)
+            .add("screenSharing", voiceState.screenSharing)
+            .add("onlineStatus", voiceState.onlineStatus.name)
+            .addNullable("updatedAt", voiceState.updatedAt?.toString())
             .build()
 
     private fun authUser(user: AuthUserView): JsonObject =

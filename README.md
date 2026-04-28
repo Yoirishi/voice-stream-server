@@ -115,6 +115,9 @@ Current GraphQL entry points:
 GraphQL operations require `Authorization: Bearer <accessToken>`.
 
 - `me`
+- `myPresence`
+- `myContactPresences`
+- `channelVoiceStates(channelId)`
 - `myContacts`
 - `incomingContactRequests`
 - `outgoingContactRequests`
@@ -144,5 +147,15 @@ GraphQL operations require `Authorization: Bearer <accessToken>`.
 - `sendDirectMessage(input)`
 - `startMediaSession(input)`
 - `joinMediaSession(input)`
+- `updateMyVoiceState(input)`
 - `leaveMediaSession(mediaSessionId)`
 - `endMediaSession(mediaSessionId)`
+
+Presence/UI state notes:
+
+- `myPresence`, `myContactPresences`, and `channelVoiceStates(channelId)` are the current snapshot API for online/voice state.
+- Presence is in-memory for MVP and is cleared on backend restart.
+- `onlineStatus` is derived from active `/ws/events` connections.
+- `updateMyVoiceState(input)` stores the caller's current `muted`, `deafened`, and `screenSharing` flags for an active media session.
+- `/ws/events` now also emits `userPresenceUpdated` and `channelVoiceStateUpdated` for realtime cache updates.
+- Frontend transport state such as `connecting` / `connected` / `reconnecting` / `disconnected` remains client-local.

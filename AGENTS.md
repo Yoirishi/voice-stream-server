@@ -18,6 +18,7 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - GraphQL contacts API now includes `myContacts`, `incomingContactRequests`, `outgoingContactRequests`, `findUsers(query)`, `sendContactRequest`, `acceptContactRequest`, `declineContactRequest`, `removeContact`, and `blockUser`.
 - GraphQL direct-message API now includes `myDirectConversations`, `directMessages(conversationId, limit)`, `startDirectConversation(userId)`, and `sendDirectMessage(input)`.
 - GraphQL media API now includes `activeMediaSessions(channelId)`, `startMediaSession(input)`, `joinMediaSession(input)`, `leaveMediaSession(mediaSessionId)`, and `endMediaSession(mediaSessionId)`.
+- GraphQL presence API now includes `myPresence`, `myContactPresences`, `channelVoiceStates(channelId)`, and `updateMyVoiceState(input)`.
 - Realtime app events are available over `ws://.../ws/events?token=<accessToken>`.
 - GraphQL `myChannels` is the frontend channel tree. It starts from `channel_members`, requires effective `channel.view`, hides private channels without access, and returns the caller's primary role plus computed channel permissions.
 - GraphQL `channelMembers(channelId)` returns active members plus their expanded role list. `addChannelMember` auto-assigns the system `USER` role, `removeChannelMember` marks `left_at` and clears role assignments, and `assignChannelRole` appends roles idempotently.
@@ -48,7 +49,11 @@ This project is a Quarkus/Kotlin backend for a Discord-like voice, screen sharin
 - `startDirectConversation(userId)` reuses an existing DM if present and not blocked; creating a brand-new DM requires an `ACCEPTED` contact relation.
 - `sendDirectMessage` requires membership and rejects blocked relationships, but existing conversations can still be listed/read after contacts are removed.
 - Event WS currently emits `channelMessageCreated`, `directMessageCreated`, `contactRequestReceived`, `mediaSessionStarted`, and `mediaSessionEnded`.
+- Event WS also emits `userPresenceUpdated` and `channelVoiceStateUpdated`.
 - Event WS authenticates with the bearer access token in the query string because browser WebSocket clients cannot reliably set `Authorization` headers.
+- Presence is in-memory for MVP. `onlineStatus` is derived from active `/ws/events` connections in `EventHub`, while `muted`, `deafened`, `screenSharing`, `voiceChannelId`, and `mediaSessionId` are tracked in `PresenceService`.
+- `updateMyVoiceState(input)` is the current app-level hook for voice UI flags. It requires an active media-session participant row, and `screenSharing=true` requires `canPublishScreen`.
+- Plain socket open/close does not currently fan out a dedicated online/offline event. Frontend can query `myPresence` / `myContactPresences` for the latest snapshot, while realtime `userPresenceUpdated` is emitted on voice/media presence changes.
 - `media_sessions` and `media_session_participants` model active voice/screen-share sessions and issued join tickets.
 - `startMediaSession` / `joinMediaSession` now return dual media credentials: preferred `serverUrl` + `participantToken` for LiveKit, and legacy `signalingUrl` + `token` for the internal signaling relay.
 - For LiveKit tokens, `canPublishAudio` currently grants both microphone and camera publish sources; there is not yet a separate webcam-specific capability.

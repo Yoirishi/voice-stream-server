@@ -10,6 +10,7 @@ import jakarta.json.JsonObject
 import jakarta.persistence.EntityManager
 import jakarta.transaction.UserTransaction
 import jakarta.websocket.CloseReason
+import org.hamcrest.Matchers.equalTo
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -77,6 +78,8 @@ class EventWebSocketEndpointTest {
         val connection = connect(bob.accessToken)
 
         try {
+            assertEquals("ONLINE", awaitMyPresenceStatus(bob.accessToken, "ONLINE"))
+
             given()
                 .contentType("application/json")
                 .header("Authorization", "Bearer ${alice.accessToken}")
@@ -110,6 +113,8 @@ class EventWebSocketEndpointTest {
         val bobConnection = connect(bob.accessToken)
 
         try {
+            assertEquals("ONLINE", awaitMyPresenceStatus(bob.accessToken, "ONLINE"))
+
             given()
                 .contentType("application/json")
                 .header("Authorization", "Bearer ${alice.accessToken}")
@@ -202,6 +207,8 @@ class EventWebSocketEndpointTest {
         val connection = connect(bob.accessToken)
 
         try {
+            assertEquals("ONLINE", awaitMyPresenceStatus(bob.accessToken, "ONLINE"))
+
             given()
                 .contentType("application/json")
                 .header("Authorization", "Bearer ${alice.accessToken}")
@@ -242,6 +249,8 @@ class EventWebSocketEndpointTest {
         val connection = connect(bob.accessToken)
 
         try {
+            assertEquals("ONLINE", awaitMyPresenceStatus(bob.accessToken, "ONLINE"))
+
             val mediaSessionId = JsonPath.from(
                 given()
                     .contentType("application/json")
@@ -289,6 +298,108 @@ class EventWebSocketEndpointTest {
             assertEquals("ENDED", event.getJsonObject("mediaSession").getString("status"))
         } finally {
             connection.close()
+        }
+    }
+
+    @Test
+    fun `websocket endpoint receives presence and voice state updates`() {
+        val alice = registerUser("event_presence_alice", "Event Presence Alice")
+        val bob = registerUser("event_presence_bob", "Event Presence Bob")
+
+        given()
+            .contentType("application/json")
+            .header("Authorization", "Bearer ${alice.accessToken}")
+            .body("""{"query":"mutation { sendContactRequest(userId: \"${bob.userId}\") { id } }"}""")
+            .post("/graphql")
+            .then()
+            .statusCode(200)
+
+        given()
+            .contentType("application/json")
+            .header("Authorization", "Bearer ${bob.accessToken}")
+            .body("""{"query":"mutation { acceptContactRequest(userId: \"${alice.userId}\") { id } }"}""")
+            .post("/graphql")
+            .then()
+            .statusCode(200)
+
+        val channelId = createVisibleChannel(
+            ownerUserId = UUID.fromString(alice.userId),
+            memberUserId = UUID.fromString(bob.userId),
+            type = ChannelType.VOICE,
+            namePrefix = "events-presence",
+        )
+        val aliceConnection = connect(alice.accessToken)
+        val bobConnection = connect(bob.accessToken)
+
+        try {
+            assertEquals("ONLINE", awaitMyPresenceStatus(alice.accessToken, "ONLINE"))
+            assertEquals("ONLINE", awaitMyPresenceStatus(bob.accessToken, "ONLINE"))
+
+            val mediaSessionId = JsonPath.from(
+                given()
+                    .contentType("application/json")
+                    .header("Authorization", "Bearer ${bob.accessToken}")
+                    .body(
+                        """
+                        {
+                          "query": "mutation { startMediaSession(input: { channelId: \"$channelId\", type: VOICE, canPublishAudio: true, canPublishScreen: true }) { mediaSessionId } }"
+                        }
+                        """.trimIndent(),
+                    )
+                    .post("/graphql")
+                    .then()
+                    .statusCode(200)
+                    .extract()
+                    .body()
+                    .asString(),
+            ).getString("data.startMediaSession.mediaSessionId")
+
+            val presenceEvent = aliceConnection.listener.awaitObject { payload ->
+                payload.getString("type", "") == "userPresenceUpdated" &&
+                    payload.getJsonObject("presence").getString("userId", "") == bob.userId &&
+                    payload.getJsonObject("presence").getString("voiceChannelId", "") == channelId.toString()
+            }
+            assertEquals("ONLINE", presenceEvent.getJsonObject("presence").getString("onlineStatus"))
+            assertEquals(mediaSessionId, presenceEvent.getJsonObject("presence").getString("mediaSessionId"))
+
+            val joinedEvent = aliceConnection.listener.awaitObject { payload ->
+                payload.getString("type", "") == "channelVoiceStateUpdated" &&
+                    payload.getString("channelId", "") == channelId.toString() &&
+                    payload.getJsonObject("voiceState").getString("userId", "") == bob.userId &&
+                    payload.getJsonObject("voiceState").getBoolean("active", false)
+            }
+            assertEquals("ONLINE", joinedEvent.getJsonObject("voiceState").getString("onlineStatus"))
+            assertEquals(false, joinedEvent.getJsonObject("voiceState").getBoolean("muted"))
+
+            given()
+                .contentType("application/json")
+                .header("Authorization", "Bearer ${bob.accessToken}")
+                .body(
+                    """
+                    {
+                      "query": "mutation { updateMyVoiceState(input: { mediaSessionId: \"$mediaSessionId\", muted: true, deafened: false, screenSharing: true }) { user { id } } }"
+                    }
+                    """.trimIndent(),
+                )
+                .post("/graphql")
+                .then()
+                .statusCode(200)
+                .body("errors", equalTo(null))
+
+            val updatedEvent = aliceConnection.listener.awaitObject { payload ->
+                payload.getString("type", "") == "channelVoiceStateUpdated" &&
+                    payload.getString("channelId", "") == channelId.toString() &&
+                    payload.getJsonObject("voiceState").getString("userId", "") == bob.userId &&
+                    payload.getJsonObject("voiceState").getBoolean("muted", false) &&
+                    payload.getJsonObject("voiceState").getBoolean("screenSharing", false)
+            }
+            assertEquals(true, updatedEvent.getJsonObject("voiceState").getBoolean("muted"))
+            assertEquals(false, updatedEvent.getJsonObject("voiceState").getBoolean("deafened"))
+            assertEquals(true, updatedEvent.getJsonObject("voiceState").getBoolean("screenSharing"))
+            assertEquals(mediaSessionId, updatedEvent.getJsonObject("voiceState").getString("mediaSessionId"))
+        } finally {
+            bobConnection.close()
+            aliceConnection.close()
         }
     }
 
@@ -380,15 +491,16 @@ class EventWebSocketEndpointTest {
     }
 
     private fun registerUser(prefix: String, displayNamePrefix: String): RegisteredUser {
+        val usernamePrefix = prefix.take(21)
         val suffix = UUID.randomUUID().toString().replace("-", "").take(10)
         val response = given()
             .contentType("application/json")
             .body(
                 """
                 {
-                  "username": "${prefix}_$suffix",
+                  "username": "${usernamePrefix}_$suffix",
                   "displayName": "$displayNamePrefix-$suffix",
-                  "email": "${prefix}_$suffix@example.com",
+                  "email": "${usernamePrefix}_$suffix@example.com",
                   "password": "correct-horse-battery-staple",
                   "deviceName": "JUnit"
                 }
@@ -406,6 +518,34 @@ class EventWebSocketEndpointTest {
             userId = json.getString("user.id"),
             accessToken = json.getString("accessToken"),
         )
+    }
+
+    private fun myPresenceStatus(accessToken: String): String {
+        val response = given()
+            .contentType("application/json")
+            .header("Authorization", "Bearer $accessToken")
+            .body("""{"query":"query { myPresence { onlineStatus } }"}""")
+            .post("/graphql")
+            .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .asString()
+
+        return requireNotNull(JsonPath.from(response).getString("data.myPresence.onlineStatus"))
+    }
+
+    private fun awaitMyPresenceStatus(accessToken: String, expectedStatus: String): String {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        var lastStatus: String? = null
+        while (System.nanoTime() < deadline) {
+            lastStatus = myPresenceStatus(accessToken)
+            if (lastStatus == expectedStatus) {
+                return lastStatus
+            }
+            Thread.sleep(100)
+        }
+        return requireNotNull(lastStatus)
     }
 
     private class ConnectedWebSocket(

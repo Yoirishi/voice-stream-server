@@ -219,6 +219,7 @@ Enums are serialized as strings:
 - `ContactStatus`: `PENDING`, `ACCEPTED`, `DECLINED`, `BLOCKED`
 - `MediaSessionType`: `VOICE`, `SCREEN_SHARE`
 - `MediaSessionStatus`: `ACTIVE`, `ENDED`
+- `UserOnlineStatus`: `ONLINE`, `OFFLINE`
 
 ### Query `myContacts`
 
@@ -385,6 +386,17 @@ type ContactRequestReceivedEvent = {
   contact: ContactView;
 };
 
+type UserPresenceUpdatedEvent = {
+  type: 'userPresenceUpdated';
+  presence: UserPresenceView;
+};
+
+type ChannelVoiceStateUpdatedEvent = {
+  type: 'channelVoiceStateUpdated';
+  channelId: string;
+  voiceState: ChannelVoiceStateView;
+};
+
 type MediaSessionStartedEvent = {
   type: 'mediaSessionStarted';
   channelId: string;
@@ -403,8 +415,11 @@ Nuances:
 - `channelMessageCreated` is currently sent to users who can at least view the channel.
 - `directMessageCreated` is sent to both DM participants, including the sender.
 - `contactRequestReceived` is sent only to the addressee of a new or reopened pending request.
+- `userPresenceUpdated` is currently emitted when backend presence changes through media/session state updates. Plain socket open/close does not yet emit a dedicated online/offline event.
+- `channelVoiceStateUpdated` is sent to users who can view the voice channel. `active: false` means the user left or the session ended.
 - `mediaSessionStarted` is sent only when a new media session row is created, not when an existing active one is reused.
 - `mediaSessionEnded` is sent when a session transitions to `ENDED`, either by explicit `endMediaSession` or when the last active participant leaves through `leaveMediaSession`.
+- `connectionStatus` should stay client-local and come from WebSocket + LiveKit lifecycle, not from backend payloads.
 
 ### Query `myDirectConversations`
 
@@ -551,6 +566,208 @@ Nuances:
 - Requires a valid bearer access token.
 - Loads the user from the database, not only from token payload.
 - Does not expose `email`, `passwordHash`, session metadata, or refresh token data.
+
+## UI State Contract
+
+For MVP, UI state is split into server-owned presence snapshots, server-pushed realtime events, and client-local transport state.
+
+Server-owned snapshot state:
+
+- `myPresence`
+- `myContactPresences`
+- `channelVoiceStates(channelId)`
+- `updateMyVoiceState(input)` writes the current caller's voice flags
+
+Server-pushed realtime events:
+
+- `channelMessageCreated`
+- `directMessageCreated`
+- `contactRequestReceived`
+- `mediaSessionStarted`
+- `mediaSessionEnded`
+- `userPresenceUpdated`
+- `channelVoiceStateUpdated`
+
+Client-local only state:
+
+- `connectionStatus: 'connecting' | 'connected' | 'reconnecting' | 'disconnected'`
+- current LiveKit room and participant transport state
+- unread counters, which are not implemented by backend yet
+
+Important nuances:
+
+- Presence is in-memory for MVP. Restarting the backend clears it.
+- `onlineStatus` is currently derived from active `/ws/events` connections on the backend.
+- Plain online/offline transitions are queryable immediately through GraphQL presence queries. The backend does not yet push a dedicated online/offline event on raw socket open/close.
+- `muted`, `deafened`, and `screenSharing` are application-level UI flags stored in-memory. Update them only after the local media action succeeds.
+
+### Query `myPresence`
+
+Returns the current caller's presence snapshot.
+
+Query:
+
+```graphql
+query MyPresence {
+  myPresence {
+    userId
+    onlineStatus
+    voiceChannelId
+    mediaSessionId
+    muted
+    deafened
+    screenSharing
+    updatedAt
+  }
+}
+```
+
+Shape:
+
+```ts
+type UserPresenceView = {
+  userId: string;
+  onlineStatus: 'ONLINE' | 'OFFLINE';
+  voiceChannelId: string | null;
+  mediaSessionId: string | null;
+  muted: boolean;
+  deafened: boolean;
+  screenSharing: boolean;
+  updatedAt: string | null;
+};
+```
+
+Nuances:
+
+- `voiceChannelId` and `mediaSessionId` are null when the user is not in an active voice session.
+- `updatedAt` is null until the backend has tracked at least one presence-changing action for the user.
+
+### Query `myContactPresences`
+
+Returns accepted contacts together with their current presence snapshot.
+
+Query:
+
+```graphql
+query MyContactPresences {
+  myContactPresences {
+    user {
+      id
+      username
+      displayName
+      avatarMediaKey
+    }
+    presence {
+      userId
+      onlineStatus
+      voiceChannelId
+      mediaSessionId
+      muted
+      deafened
+      screenSharing
+      updatedAt
+    }
+  }
+}
+```
+
+Shape:
+
+```ts
+type ContactPresenceView = {
+  user: AuthUserView;
+  presence: UserPresenceView;
+};
+```
+
+Nuances:
+
+- Only accepted contacts are returned.
+- The list is sorted by contact `displayName`, then `username`.
+
+### Query `channelVoiceStates(channelId)`
+
+Returns the active voice-state roster for one visible voice channel.
+
+Query:
+
+```graphql
+query ChannelVoiceStates($channelId: UUID!) {
+  channelVoiceStates(channelId: $channelId) {
+    user {
+      id
+      username
+      displayName
+      avatarMediaKey
+    }
+    channelId
+    mediaSessionId
+    active
+    muted
+    deafened
+    screenSharing
+    onlineStatus
+    updatedAt
+  }
+}
+```
+
+Shape:
+
+```ts
+type ChannelVoiceStateView = {
+  user: AuthUserView;
+  channelId: string;
+  mediaSessionId: string | null;
+  active: boolean;
+  muted: boolean;
+  deafened: boolean;
+  screenSharing: boolean;
+  onlineStatus: 'ONLINE' | 'OFFLINE';
+  updatedAt: string | null;
+};
+```
+
+Nuances:
+
+- Only currently active voice participants are returned.
+- Requires access to the channel through the existing channel visibility rules.
+- `active` should be treated as authoritative for roster presence; users who have left the session disappear from this query.
+
+### Mutation `updateMyVoiceState(input)`
+
+Updates the current caller's in-memory voice UI flags for an active media session.
+
+Mutation:
+
+```graphql
+mutation UpdateMyVoiceState($mediaSessionId: UUID!) {
+  updateMyVoiceState(input: {
+    mediaSessionId: $mediaSessionId
+    muted: true
+    deafened: false
+    screenSharing: true
+  }) {
+    user {
+      id
+    }
+    channelId
+    mediaSessionId
+    active
+    muted
+    deafened
+    screenSharing
+    onlineStatus
+    updatedAt
+  }
+}
+```
+
+Nuances:
+
+- The caller must be an active participant in the target media session.
+- `screenSharing: true` is rejected unless the issued media ticket allowed screen publish.
+- Use this after the local mute/deafen/share action succeeds, not before.
 
 ### Query `myChannels`
 

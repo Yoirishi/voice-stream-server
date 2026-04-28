@@ -22,14 +22,22 @@ class EventHub {
             .add(session.id)
     }
 
-    fun leave(connectionId: String) {
-        val connection = connectionsById.remove(connectionId) ?: return
+    fun leave(connectionId: String): EventConnection? {
+        val connection = connectionsById.remove(connectionId) ?: return null
         connectionIdsByUserId[connection.userId]?.remove(connectionId)
+        return connection
     }
 
     fun close(session: Session, reason: String) {
         session.close(CloseReason(CloseReason.CloseCodes.CANNOT_ACCEPT, reason))
     }
+
+    fun isConnected(userId: UUID): Boolean =
+        connectionIdsByUserId[userId]
+            .orEmpty()
+            .asSequence()
+            .mapNotNull { connectionsById[it] }
+            .any { it.session.isOpen }
 
     fun publishToUsers(userIds: Collection<UUID>, message: String) {
         userIds
